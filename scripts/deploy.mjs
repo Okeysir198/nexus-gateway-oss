@@ -138,7 +138,7 @@ const saveState = () => {
 
 // ── main ────────────────────────────────────────────────────────────────────────────
 if (!token) {
-  die("set CLOUDFLARE_API_TOKEN (see the 'Token' notes at the top of scripts/deploy.mjs or run with --help)");
+  die('set CLOUDFLARE_API_TOKEN (create one: see "Get your CLOUDFLARE_API_TOKEN" in the README)');
 }
 if (Number(process.versions.node.split(".")[0]) < 20) die("Node 20 or newer is required");
 if (!existsSync(join(ROOT, "node_modules"))) die("run `npm install` first");
@@ -294,7 +294,7 @@ async function deploy() {
   say(`  Console        ${base}/admin`);
   say(`  Password       ${secrets.CONSOLE_PASSWORD}`);
   say(`  Master key     saved in ${secretsPath}`);
-  say(`\nNext: sign in, open Providers > Provider keys, paste your API keys, then API keys > Generate.`);
+  say(`\nNext: sign in, open Providers, paste the API key on each provider you use, then API keys > Generate.`);
   say(`Remove everything this script created with: node scripts/deploy.mjs --name ${name} --destroy`);
 }
 

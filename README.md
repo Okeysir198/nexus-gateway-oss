@@ -24,7 +24,7 @@ You need a Cloudflare account, Node 20+, and a domain on Cloudflare (or use `--w
 
 ```bash
 npm install
-export CLOUDFLARE_API_TOKEN=...                      # permissions below
+export CLOUDFLARE_API_TOKEN=...                      # how to get it: just below
 node scripts/deploy.mjs --domain gateway.example.com
 ```
 
@@ -43,11 +43,32 @@ Options:
 - `--destroy`: delete exactly what the script created.
 - `--account-id`, `--yes`: see `node scripts/deploy.mjs --help`.
 
-API token (My Profile > API Tokens):
+Get your `CLOUDFLARE_API_TOKEN`:
 
-- Account: *Workers Scripts: Edit*, *D1: Edit*, *AI Gateway: Edit*.
-- Your domain's zone: *Workers Routes: Edit*, *DNS: Edit*, *Zone: Read*.
-- If a call is refused, the script stops and names the missing permission.
+1. Open <https://dash.cloudflare.com/profile/api-tokens> and click **Create Token**.
+2. Next to **Create Custom Token**, click **Get started**.
+3. Name it (for example `nexus-gateway deploy`) and add these permissions, one row each:
+
+   | Scope | Permission | Access |
+   |---|---|---|
+   | Account | Workers Scripts | Edit |
+   | Account | D1 | Edit |
+   | Account | AI Gateway | Edit |
+   | Zone | Workers Routes | Edit |
+   | Zone | DNS | Edit |
+   | Zone | Zone | Read |
+
+4. Under **Account Resources**, choose **Include > your account**. Under **Zone Resources**,
+   choose **Include > Specific zone > your domain**.
+5. Click **Continue to summary**, then **Create Token**, and copy the token. It is shown once.
+6. Run `export CLOUDFLARE_API_TOKEN=<the token>` in the terminal where you run the script.
+
+Notes:
+
+- Using `--workers-dev` (no domain)? Skip the three Zone rows and the zone resource.
+- The token is only read by your terminal; the script never stores it or sends it to the Worker.
+- If a call is refused, the script stops and names the missing permission. Add it to the
+  token (**Edit** on the token page) and run the script again.
 
 Local state:
 
