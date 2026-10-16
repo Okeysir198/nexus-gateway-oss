@@ -1,0 +1,94 @@
+{
+  "_comment": "nexus-gateway provider registry. Callers address a model as {provider}:{model} (or {provider}/{model}); the prefix is looked up here and everything after the FIRST separator is the model id sent upstream. EVERY provider egresses through Cloudflare AI Gateway — dispatch() refuses an entry without a slug and no direct-fetch code path exists. This map IS the allowlist: a prefix that is not here cannot be reached, which is what stops a virtual key spending against a provider you never enabled. To add a provider: register it in AI Gateway (or use a native slug), then add one entry — usually just {slug, secret}. Everything else has a default.",
+  "defaults": {
+    "_comment": "Applied to every provider unless overridden. Kept separate so the common case is genuinely empty config.",
+    "upstream": "openai_chat",
+    "path": "/v1/chat/completions"
+  },
+  "catchAll": "nvidia_nim",
+  "aliases": {
+    "_comment": "Alias → canonical. Callers migrate naming at their own pace without duplicating an entry.",
+    "nim_nvidia": "nvidia_nim",
+    "hf": "huggingface",
+    "cf": "cloudflare"
+  },
+  "providers": {
+    "nvidia_nim": {
+      "slug": "custom-nvidia",
+      "secret": "NVIDIA_API_KEY",
+      "keyPool": "nvidia_nim",
+      "note": "6-key rotation is Worker-side — AI Gateway cannot rotate keys. Worth ~6x the per-key rate limit."
+    },
+    "groq": {
+      "slug": "groq",
+      "secret": "GROQ_API_KEY"
+    },
+    "huggingface": {
+      "slug": "huggingface",
+      "secret": "HF_TOKEN"
+    },
+    "openrouter": {
+      "slug": "openrouter",
+      "secret": "OPENROUTER_API_KEY",
+      "reasoning": "openrouter"
+    },
+    "openai": {
+      "slug": "openai",
+      "secret": "OPENAI_API_KEY",
+      "reasoning": "openai_effort"
+    },
+    "zai": {
+      "slug": "custom-zai",
+      "secret": "ZAI_API_KEY",
+      "path": "/api/coding/paas/v4/chat/completions",
+      "reasoning": "zai_thinking",
+      "note": "Coding-plan endpoint sits at a non-standard path; AIG appends it to the base_url verbatim."
+    },
+    "zai_anthropic": {
+      "slug": "custom-zai-anthropic",
+      "secret": "ZAI_API_KEY",
+      "upstream": "anthropic_native",
+      "path": "/api/anthropic/v1/messages",
+      "translate": "none",
+      "note": "The ONLY route where a signed Anthropic thinking chain survives — body is forwarded untouched."
+    },
+    "anthropic": {
+      "slug": "anthropic",
+      "secret": "ANTHROPIC_API_KEY",
+      "upstream": "anthropic_native",
+      "path": "/v1/messages",
+      "translate": "none",
+      "note": "Direct api.anthropic.com via AIG's native slug. Body forwarded untouched, so signed thinking chains survive. anthropic-version/-beta are forwarded; anthropic-workspace-id comes from ANTHROPIC_WORKSPACE_ID when the key is not workspace-scoped."
+    },
+    "cloudflare": {
+      "slug": "workers-ai",
+      "secret": "CLOUDFLARE_API_KEY",
+      "dropTools": true,
+      "note": "Workers AI rejects the tools field."
+    },
+    "dynamic": {
+      "slug": "compat",
+      "path": "/chat/completions",
+      "keepPrefix": true,
+      "keyPool": "nvidia_nim",
+      "secret": "NVIDIA_API_KEY",
+      "note": "AI Gateway DYNAMIC ROUTES. Addressed as the literal model `dynamic/{route-name}` on the gateway's `compat` endpoint, so the prefix must survive (keepPrefix) — a bare route name gets `Chat completion bad format`. `compat` is a real AIG path segment, not a registered provider, hence no `custom-` prefix. The route picks the provider itself; every node of the routes we ship is `custom-nvidia`, so the NVIDIA pool key is the right outbound credential. ⚠️ A route that mixes PROVIDERS cannot work this way — one Authorization header would be sent to every hop; that case needs AI Gateway stored keys (BYOK)."
+    }
+  },
+  "keyPools": {
+    "nvidia_nim": {
+      "strategy": "simple-shuffle",
+      "cooldownMs": 20000,
+      "secrets": [
+        "NVIDIA_API_KEY",
+        "NVIDIA_API_KEY_02",
+        "NVIDIA_API_KEY_03",
+        "NVIDIA_API_KEY_04",
+        "NVIDIA_API_KEY_05",
+        "NVIDIA_API_KEY_06"
+      ]
+    }
+  },
+  "requestTimeoutMs": 120000,
+  "numRetries": 4
+}

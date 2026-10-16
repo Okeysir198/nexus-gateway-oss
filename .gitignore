@@ -1,0 +1,11 @@
+node_modules/
+.dev.vars
+.wrangler/
+dist/
+
+# Secrets and local environment
+.env
+*.env
+.venv/
+__pycache__/
+.pytest_cache/

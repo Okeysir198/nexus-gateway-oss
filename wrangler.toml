@@ -1,0 +1,58 @@
+# nexus-gateway - an LLM edge as a Cloudflare Worker.
+# OpenAI <-> Anthropic wire translation, AI Gateway egress, D1 virtual keys.
+# Setup, secrets and architecture: README.md.
+#
+# This file ships with PLACEHOLDERS. Replace every value marked CHANGE-ME before
+# `wrangler deploy`.
+
+name = "nexus-gateway"
+main = "src/index.ts"
+compatibility_date = "2025-01-15"
+workers_dev = true
+
+# CHANGE-ME (optional): attach your own hostname as the Worker's custom domain.
+# Cloudflare repoints the hostname's DNS to the Worker on deploy. Without a route the
+# Worker is served at <name>.<your-subdomain>.workers.dev.
+# routes = [
+#   { pattern = "gateway.example.com", custom_domain = true }
+# ]
+
+[observability]
+enabled = true
+
+# CHANGE-ME: `npx wrangler d1 create nexus_keys`, paste the id it prints, then load the
+# schema: `npx wrangler d1 execute nexus_keys --remote --file=schema.sql`.
+[[d1_databases]]
+binding = "KEYS_DB"
+database_name = "nexus_keys"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[vars]
+# Console sign-in is Google-only.
+# CHANGE-ME: comma-separated operator email allowlist. An EMPTY list denies everyone, on
+# purpose (isOperator fails closed). Removing an address blocks the NEXT login only;
+# rotate ADMIN_SESSION_SECRET to sign everyone out.
+OPERATOR_EMAILS = ""
+# CHANGE-ME: your Google OAuth client id. Its authorised redirect URIs must include
+# https://<your-host>/oauth/google/callback. The client secret is GOOGLE_CLIENT_SECRET
+# (`wrangler secret put`); the session cookie is keyed by ADMIN_SESSION_SECRET (secret;
+# generate with `openssl rand -base64 32`).
+GOOGLE_CLIENT_ID = ""
+
+# Placement hint: Anthropic refuses requests that egress from unsupported regions (some
+# colos get 403 "Request not allowed"), so run near api.anthropic.com instead. Safe to
+# remove if you do not route to Anthropic.
+[placement]
+hostname = "api.anthropic.com"
+
+[[durable_objects.bindings]]
+name = "THINKING_SESSION_DO"
+class_name = "ThinkingSessionDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ThinkingSessionDO"]
+
+# No [triggers]. If a cron is ever added, add the matching `scheduled` export in
+# src/index.ts in the SAME commit - a trigger without a handler fires into a Worker that
+# can't serve it.

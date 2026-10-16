@@ -1,0 +1,57 @@
+# nexus-gateway - local dev secrets. Copy to `.dev.vars` (gitignored) for `wrangler dev`.
+# In production these are set with `wrangler secret put`.
+#
+# Every backend is an AI Gateway provider, so its hostname lives in AI Gateway config,
+# not here - repointing a backend is a dashboard edit, never a redeploy.
+#
+# Keep this file in step with what the CODE reads, not with what is memorable. The
+# authoritative lists are `config.default.json` (`"secret"` fields) and the `env.X`
+# reads in `src/`. A name that drifts here does not fail loudly: the route 503s with
+# `no API key configured for provider X`, which reads like a missing AI Gateway
+# provider. Verify a deployment with `npx wrangler secret list`.
+
+# -- AI Gateway (REQUIRED) -----------------------------------------------------------
+# Without these, egress 503s - and since EVERY route goes through AI Gateway, every
+# request fails. AIG_GATEWAY_ID is the name of the gateway you created in the
+# Cloudflare dashboard (AI > AI Gateway).
+CF_ACCOUNT_ID=
+AIG_GATEWAY_ID=
+
+# -- Gateway admin (REQUIRED) --------------------------------------------------------
+# Gates /key/* and is the recovery path if the console locks you out. Fail-closed:
+# with this unset, the master-key routes reject everything.
+NEXUS_MASTER_KEY=
+
+# -- Provider keys (set only the providers you use) ----------------------------------
+# NVIDIA rotates across up to 6 (src/keypool.ts); any subset may be set. That pool is
+# the one thing AI Gateway cannot do itself.
+NVIDIA_API_KEY=
+NVIDIA_API_KEY_02=
+NVIDIA_API_KEY_03=
+NVIDIA_API_KEY_04=
+NVIDIA_API_KEY_05=
+NVIDIA_API_KEY_06=
+OPENROUTER_API_KEY=
+GROQ_API_KEY=
+HF_TOKEN=
+OPENAI_API_KEY=
+ZAI_API_KEY=
+ANTHROPIC_API_KEY=
+# Only if the Anthropic key is not workspace-scoped.
+ANTHROPIC_WORKSPACE_ID=
+CLOUDFLARE_API_KEY=
+# A provider added through the /admin console (a D1 row) is not named by the bundled
+# config, but its key still has to be set here (or as a Worker secret) under whatever
+# `secret` name you gave it, e.g.:
+# MYPROV_API_KEY=
+
+# -- Console sign-in (Google-only) ---------------------------------------------------
+# GOOGLE_CLIENT_ID also ships as a plaintext var in wrangler.toml; the secret must be
+# `wrangler secret put`.
+# OPERATOR_EMAILS empty denies everyone (fail-closed, isOperator()).
+# ADMIN_SESSION_SECRET keys the console session cookie (HMAC); rotating it signs every
+# operator out. Mint one: openssl rand -base64 32.
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+OPERATOR_EMAILS=
+ADMIN_SESSION_SECRET=

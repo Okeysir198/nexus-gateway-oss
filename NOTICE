@@ -1,0 +1,10 @@
+Third-party material
+
+src/admin/theme/fonts.ts embeds subsets (latin, vietnamese) of the Geist and Geist Mono
+typefaces as base64 data: URIs.
+
+  Geist, Geist Mono - Copyright (c) Vercel, Inc.
+  Licensed under the SIL Open Font License, Version 1.1
+  https://openfontlicense.org
+
+The console stylesheet is compiled with Tailwind CSS (MIT) from styles/.

@@ -1,0 +1,53 @@
+/* Local mechanism layer — the ONLY unlayered rules in this app.
+   Unlayered beats Tailwind's layered utilities on purpose: these are
+   progressive-enhancement MECHANISMS, not looks. Token-only: no colour of its
+   own — roles and utilities only (check:css enforces no hex, no palette). */
+
+:root { color-scheme: light; }
+
+/* The sidebar-07 skeleton's width knobs. Declared HERE, not in a style=
+   attribute: the console's CSP nonce covers <style> and <script> blocks but
+   NOT inline style attributes (that needs style-src-attr 'unsafe-inline'). */
+[data-slot="sidebar-wrapper"] {
+  --sidebar-width: 16rem;
+  --sidebar-width-icon: 3rem;
+}
+
+/* Hidden radio recipe — the PE tab mechanism: labels target the radios, the
+   generated reveal/active rules live in src/admin/styles.ts (GENERATED_CSS). */
+.tab-radio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* Panels are radio-revealed (GENERATED_CSS); the base state is closed. */
+.tabpanel { display: none; }
+
+/* The UA's [hidden] rule is display:none, which ANY display utility on the element
+   (EMPTY's flex, buttons' inline-flex) beats. Every hidden card / empty state would
+   otherwise render anyway. */
+[hidden] { display: none !important; }
+
+/* Toast dismissal: a class, never el.style.opacity (an inline style the nonce does
+   not cover). */
+.fade { opacity: 0; transition: opacity 320ms ease-out; }
+
+/* No-JS fallbacks: radios keep working via labels + :checked alone; only the
+   script-driven enhancements (collapse, theme toggle glyphs) are gone. The
+   .tabpanel rule is load-bearing text (suite-pinned). */
+.no-js .tabpanel { display: block; }
+.no-js #sidebar-toggle { display: none; }
+
+/* Theme toggle: one glyph visible per scheme; the inline script flips the
+   .is-dark class and writes the ONE theme cookie. */
+#theme-toggle.is-dark .ic-sun { display: inline-flex; }
+#theme-toggle.is-dark .ic-moon { display: none; }
+#theme-toggle:not(.is-dark) .ic-sun { display: none; }
+#theme-toggle:not(.is-dark) .ic-moon { display: inline-flex; }
