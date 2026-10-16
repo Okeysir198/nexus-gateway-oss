@@ -7,7 +7,7 @@ import type { GatewayConfig, ProviderEntry, ResolvedRoute } from "./types";
  *
  *  Splitting on the FIRST separator is what makes the convention work:
  *    openrouter/deepseek/deepseek-v4  → openrouter + "deepseek/deepseek-v4"
- *    nim_nvidia:meta/llama-3.1-8b     → nim_nvidia + "meta/llama-3.1-8b"
+ *    nvidia_nim:meta/llama-3.1-8b     → nvidia_nim + "meta/llama-3.1-8b"
  *    myprov/qwen:7b                   → myprov + "qwen:7b"      (colon after slash is
  *                                        part of the model id, not a separator)
  *    gpt-5                            → no prefix → catch-all, whole string preserved

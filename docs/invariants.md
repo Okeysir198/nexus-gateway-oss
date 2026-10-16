@@ -1,8 +1,7 @@
 # Invariants, architecture and gotchas
 
-The rules that break things quietly. Source comments refer to these by number
-("Invariant 4b"). Read this before touching auth, routing, the translate layer or the
-console.
+The rules that break things quietly. Read this before touching auth, routing, the
+translate layer, provider keys or the console.
 
 ## Invariants
 
@@ -17,7 +16,7 @@ Enforced in three places, deliberately redundant:
 `DROP_REQUEST_HEADERS` strips `authorization`, so each egress sets the upstream credential
 explicitly (the pooled key, the single secret, or the caller's own key under BYOK).
 
-### 1b. One virtual-key gate, above every backend
+### 2. One virtual-key gate, above every backend
 `index.ts` runs `authenticate()` ONCE, after the `/admin/*` and master-keyed `/key/*`
 branches and before any chat or Anthropic-surface handling. A gate that must be remembered
 per route will eventually be forgotten; this one covers any route added below it by
@@ -26,7 +25,7 @@ you have reopened the hole.
 
 The key must arrive in `Authorization`, `x-api-key`, or `?api_key=` (`extractToken`).
 
-### 4. D1 is the sole key authority
+### 3. D1 is the sole key authority
 `/key/*` mints, revokes and lists against D1 only.
 - **Revocation must hash first.** `revokeKey` matches `key_id` or `token_hash`; passing a
   raw `sk-...` matches neither and silently revokes nothing. `keyDelete` hashes; the console
@@ -41,7 +40,7 @@ The key must arrive in `Authorization`, `x-api-key`, or `?api_key=` (`extractTok
   latency. Don't promise instant revocation. A **D1 outage** verdict is deliberately never
   cached: failing closed for 60s on a blip would be worse than the extra query.
 
-### 4b. BYOK: a non-D1 token is a cloud-only credential
+### 4. BYOK: a non-D1 token is a cloud-only credential
 A token that misses in D1 is not an automatic 401. On the **chat paths and Anthropic
 surfaces only**, `authenticate()` hands it back as `byokToken` and `dispatch` forwards it
 upstream as the caller's own provider key (`callCloudViaAIG(..., byok)`, replacing both the
@@ -60,8 +59,8 @@ third party can use the edge with their own OpenRouter or OpenAI key and no virt
 - Widening the condition that scopes BYOK to chat paths would hand strangers whatever other
   backend you add later. Keep it narrow.
 
-### 6. Two config layers: bundled floor + D1 overlay
-`src/config.ts` imports `config.default.json` at build time (the FLOOR; editing it needs a
+### 5. Two config layers: bundled floor + D1 overlay
+`src/config.ts` imports `src/config.default.json` at build time (the FLOOR; editing it needs a
 `wrangler deploy`) and overlays the D1 `providers` / `provider_aliases` tables on top
 (runtime, ~60s cache). A D1 row wins.
 
@@ -70,7 +69,7 @@ outage degrades to the bundled set instead of refusing every model, and a row ca
 bundled provider without a code change. **Not KV**: this gates spend, and KV's eventual
 consistency means a provider you just disabled could still be served.
 
-### 7. Prompt-cache breakpoints must survive translation, and usage must not double-count
+### 6. Prompt-cache breakpoints must survive translation, and usage must not double-count
 `cache_control` is a property **of a content BLOCK**. Anything that joins blocks into one
 string deletes it, and with it all prompt caching on every translated route, silently,
 because the request and response still look valid. There are **three** places that flatten,
@@ -103,14 +102,14 @@ counters. Without both, a streamed turn reads as `input_tokens: 0`: "never told"
 ## Architecture
 
 - **`src/index.ts`**: entry and `dispatch()`: auth, resolve route, AI Gateway egress.
-- **`src/config.ts`**: bundled route table, `${VAR}` interpolation, `validateConfig`
+- **`src/config.ts`**: bundled route table, `validateConfig`
   (warn-and-drop, never throws on a field error; a hard throw would 500 all traffic).
 - **`src/router.ts`**: `splitModel` (split on the FIRST `:` or `/`) plus a prefix map; an
   unknown prefix falls through to `catchAll`.
-- **`src/providers_db.ts`**: the D1 overlay behind Invariant 6.
+- **`src/providers_db.ts`**: the D1 overlay behind Invariant 5.
+- **`src/provider_keys.ts`**: provider API keys stored from the console (see below).
 - **`src/upstream/aigateway.ts`**: the single egress. `callViaAIGateway` and
-  `callCloudViaAIG` for chat (plus the NVIDIA key rotation, which AI Gateway cannot do),
-  `proxyViaAIG` for any-method/any-path/binary.
+  `callCloudViaAIG` for chat (plus the NVIDIA key rotation, which AI Gateway cannot do).
 - **`src/upstream/openai.ts`**: only `pickKey` (pooled round-robin vs single-secret outbound
   auth).
 - **`src/keypool.ts`**: the NVIDIA multi-key round-robin with cooldown behind `pickKey`.
@@ -133,8 +132,9 @@ counters. Without both, a streamed turn reads as `input_tokens: 0`: "never told"
 - **`src/translate/`**: `a2o_request`, `o2a_response`, `a2o_stream` (the streaming state
   machine), `reasoning` (dialects), `thinking_session` (DO client).
 - **`src/auth.ts`, `keys_db.ts`, `key_webhook.ts`**: D1 virtual keys.
-- **`src/admin/`**: `login.ts` (Google sign-in and the session cookie), `google.ts` (OAuth
-  helpers), `session.ts` (HMAC sessions), `routes.ts` (API),
+- **`src/admin/`**: `login.ts` (sign-in routes and page), `google.ts` (OAuth helpers),
+  `password.ts` (shared-password hash, verify and throttle), `session.ts` (HMAC sessions),
+  `routes.ts` (API),
   `page.ts`/`view_shell.ts`/`view_{keys,providers,users}.ts`/`ui.ts`/`icons.ts`/`brand.ts`/
   `styles.ts`/`client_core.ts` (server-rendered HTML), `theme/{fonts,app.css.gen}.ts`
   (static and generated; see `docs/console-ui.md`).
@@ -151,11 +151,44 @@ Full detail in `docs/console-ui.md`.
   siblings or a tab silently never shows (`test/page_render.test.ts` guards it).
 - No inline `style=` (a nonce does not cover it); `font-src data:` is required.
 - Nonce-based CSP (no `unsafe-inline`), `frame-ancestors 'none'`, `form-action 'none'`; the
-  sign-in "button" is a LINK to `/login/google`, never a form POST.
+  Google sign-in is a LINK to `/login/google`, and the password form submits with `fetch()`;
+  neither is a form POST.
+
+## Registering a provider from the console
+
+`src/aig_providers.ts` lets **Providers > Add provider** create the AI Gateway custom provider
+itself, when the optional `AIG_API_TOKEN` secret is set:
+
+- The token is a separate Cloudflare token scoped to *AI Gateway: Edit*, never the deploy
+  token. It is read only by this module and is not echoed in any response or log.
+- The base URL must be a bare public `https` host, and never this gateway's own host (a
+  provider pointing back at the Worker would loop every request into it).
+- An existing provider with the same URL is reused. One with a different URL is an error:
+  silently repointing it would redirect every route that already uses it.
+- Registration happens before the D1 row is written, so a refusal saves nothing.
+
+## Provider keys from the console
+
+Provider API keys may be stored in D1 (`provider_keys`, AES-GCM) instead of as Worker secrets
+(`src/provider_keys.ts`). They are laid over `env` once per request by `withProviderKeys`, so
+`pickKey`, the key pool, health probes and the Anthropic surface keep reading
+`env[secretName]` and do not know the source. The rules, each of which exists for a reason:
+
+- A Worker secret always wins over a stored key.
+- Only names referenced by a provider or key pool in the live config are written or read. The
+  list comes from config, never from the request, so a row cannot shadow `NEXUS_MASTER_KEY`,
+  `ADMIN_SESSION_SECRET` or a binding.
+- The AES key derives from `KEY_ENCRYPTION_SECRET`, else `NEXUS_MASTER_KEY`. Changing it makes
+  rows undecryptable; they read as missing (logged), never as an error on the request path.
+- Each ciphertext is bound to its secret name (AES-GCM additional data).
+- The API never returns a value: only the name, the providers using it, the source and the
+  last four characters. The table is created on first write if `schema.sql` was not rerun.
+- Cached 60 s per isolate; a console write invalidates the isolate that handled it.
 
 ## Auth
 
-**Console (`/admin`)** is Google-only; no key in the browser:
+**Console (`/admin`)** has two doors, Google and an optional shared password. No key ever
+reaches the browser:
 - `GET /login/google` mints a `g_state` nonce cookie (HttpOnly, **SameSite=Lax**, because it
   must survive the top-level redirect back from Google; the SESSION cookie is Strict) and
   303s to Google with scopes `openid email` and `prompt=select_account`. The redirect URI
@@ -169,10 +202,18 @@ Full detail in `docs/console-ui.md`.
   email, with no D1 lookup. 12h TTL; HttpOnly; Secure; SameSite=Strict.
 - **Rotating `ADMIN_SESSION_SECRET` signs every operator out everywhere**; that is the kill
   switch. Removing an address from `OPERATOR_EMAILS` blocks the NEXT login only.
-- No login throttle, on purpose: Google owns credential abuse; there is no password here to
-  guess. CSRF: SameSite=Strict plus the `x-nexus-console` header on mutating API routes.
-- Operators are managed by editing `OPERATOR_EMAILS` in `wrangler.toml` and deploying. The
-  Operators tab is read-only.
+- **Shared password** (only when the `ADMIN_PASSWORD_HASH` secret is set): `POST /login/password`
+  with `{"password"}` and the `x-nexus-console` header. The secret is
+  `pbkdf2-sha256$<iterations>$<salt>$<hash>` (made by `scripts/hash-password.mjs`; workerd caps
+  PBKDF2 at 100,000 iterations). Constant-time compare; a malformed hash fails closed. It is
+  an alternative gate: it does not consult `OPERATOR_EMAILS`, and the session identity is the
+  fixed label `shared-password`. Failures are throttled (5 per client per 15 min) in isolate
+  memory only, which is NOT a global limit; put a Cloudflare rate-limiting rule on the route
+  for a real one. The sign-in form submits with `fetch()` from a nonce'd script so
+  `form-action 'none'` holds.
+- CSRF: SameSite=Strict plus the `x-nexus-console` header on mutating API routes.
+- Google operators are managed by editing `OPERATOR_EMAILS` in `wrangler.toml` and
+  deploying; the console has no operator list.
 
 **API**: callers use D1 virtual keys, never the master key. `NEXUS_MASTER_KEY` gates
 `/key/*`; it is the machine surface and the recovery path if the console locks you out. It
@@ -221,28 +262,22 @@ is a Worker secret and cannot be read back, so keep your own copy. Mint everyday
   model*, not a bad-request error, because the upstream names the field, never the caller.
 - **A Durable Object spins up only when the CLIENT sends `thinking`**; gating on the route
   instead would create a DO for every request to a reasoning-capable provider.
-- **Provider reds in tests are usually provider-side**: stale keys, region blocks,
-  deprecated endpoints. Every request still reaches its provider.
 - **A dynamic route's `fallback` edge is the GENERIC failure edge**, not a 429/5xx one: the
   caller sees the fallback's error, and node `timeout` is first-byte, not total. See
   `docs/dynamic-routes.md`.
 - **Verify a provider key against the provider DIRECTLY before blaming AI Gateway.** A stale
   key returns 401/403 from the AI Gateway hop, which reads exactly like a gateway-auth or
-  BYOK failure. One `curl` to the provider settles it.
-- **Prompt caching and usage** are summarised under Invariant 7; remember that streamed
-  usage arrives after `finish_reason`.
+  BYOK failure. One `curl` to the provider settles it. Provider failures in `/health?probe=1`
+  are usually the provider's side (stale key, region block, retired endpoint).
 
 ## Tests
 
 `npm test` (vitest in workerd, via `@cloudflare/vitest-pool-workers`), so
 `TransformStream` and `crypto.subtle` behave as in production; `pretest` runs `check:css`
 first. Mostly pure-function (router, translate layer, key pool, BYOK boundary, prompt
-caching, Google session gate); `page_render` renders `adminPage()`/`loginPage()` and asserts
-the template literals and tab structure survived. `dispatch`, AI Gateway and real D1 are
-left to the live suite.
-
-`tests/*.py` is the LIVE suite, gated on `RUN_NEXUS_LIVE=1`; it skips (never errors) when
-the edge is unreachable.
+caching, sign-in, provider keys); `page_render` renders `adminPage()`/`loginPage()` and asserts
+the template literals and tab structure survived. `dispatch`, AI Gateway and a real D1 are
+not covered; check those against a deployed or `wrangler dev` instance.
 
 tsconfig runs `strict` plus `noUnusedLocals`, `noUnusedParameters`,
 `noFallthroughCasesInSwitch` and **`noUncheckedIndexedAccess`**; the last one is why
@@ -273,9 +308,8 @@ No deploy needed for the common case:
    `POST /accounts/{acc}/ai-gateway/custom-providers` with `{name, slug, base_url, enable}`.
    **`base_url` is the bare host**, and referencing a custom provider REQUIRES the
    `custom-` prefix (registered `myprov`, referenced as `custom-myprov`).
-2. `wrangler secret put <PROVIDER_KEY>`. This is the one step that needs a deploy cycle
-   until the key lives in AI Gateway itself.
-3. `/admin` > **Providers** > add `{prefix, slug, secret}`. Live within ~60s.
+2. `/admin` > **Providers** > add `{prefix, slug, secret name}` and paste the API key (or
+   set it with `wrangler secret put <SECRET_NAME>`). Live within ~60s.
 
-Only edit `config.default.json` for a provider that should survive a database reset, or when
+Only edit `src/config.default.json` for a provider that should survive a database reset, or when
 you need a quirk the console does not expose.

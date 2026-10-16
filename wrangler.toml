@@ -28,7 +28,13 @@ database_name = "nexus_keys"
 database_id = "00000000-0000-0000-0000-000000000000"
 
 [vars]
-# Console sign-in is Google-only.
+# CHANGE-ME: your Cloudflare account id and the name of the AI Gateway you created
+# (dashboard: AI > AI Gateway). Neither is secret. With these unset every request fails,
+# because every request egresses through AI Gateway.
+CF_ACCOUNT_ID = ""
+AIG_GATEWAY_ID = ""
+
+# Console sign-in: Google (this block) and/or a shared password (ADMIN_PASSWORD_HASH secret).
 # CHANGE-ME: comma-separated operator email allowlist. An EMPTY list denies everyone, on
 # purpose (isOperator fails closed). Removing an address blocks the NEXT login only;
 # rotate ADMIN_SESSION_SECRET to sign everyone out.

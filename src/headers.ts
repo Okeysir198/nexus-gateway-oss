@@ -1,5 +1,5 @@
-// Hop-by-hop headers + caller auth + Cloudflare-injected headers that must not be
-// forwarded upstream. Each upstream authenticates with its own key.
+// Hop-by-hop headers, caller credentials and Cloudflare-injected headers that must not be
+// forwarded upstream. Each egress sets its own upstream credential.
 
 export const DROP_REQUEST_HEADERS = new Set([
   "connection",
@@ -13,7 +13,8 @@ export const DROP_REQUEST_HEADERS = new Set([
   "host",
   "content-length",
   "authorization",
-  "x-api-key", // Anthropic-style caller auth — re-added per upstream
+  "cookie", // a browser client's cookies are never the upstream's business
+  "x-api-key", // the caller's key; the egress sets the upstream's
   "cf-connecting-ip",
   "cf-ipcountry",
   "cf-ray",

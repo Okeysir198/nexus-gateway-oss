@@ -8,12 +8,10 @@ export function generateToken(): string {
   return "sk-" + b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-/** Coerce a timestamp to epoch SECONDS.
- *  Load-bearing: ISO-8601 strings bound verbatim into columns declared INTEGER are
- *  accepted by SQLite's loose typing, which breaks two things — `lookupKey`'s numeric `expires_at <
- *  now` comparison (a string never compares as expected, so expiry silently never
- *  fired) and `listKeys`' ORDER BY (mixed text/integer sorts by storage class first).
- *  Accepts number (epoch s OR ms), ISO string, or null. */
+/** Coerce a timestamp to epoch SECONDS. Load-bearing: SQLite accepts an ISO string in an
+ *  INTEGER column, and a string breaks `lookupKey`'s `expires_at < now` check (expiry would
+ *  silently never fire) and `listKeys`' ORDER BY. Accepts a number (epoch s or ms), an ISO
+ *  string, or null. */
 export function toEpochSeconds(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   if (typeof v === "number" && Number.isFinite(v)) {
@@ -55,28 +53,24 @@ export async function lookupKey(env: Env, tokenHash: string): Promise<VirtualKey
 
 export interface KeyRecord {
   key_id?: string;
-  key?: string; // raw token (only present on /key/generate)
+  key?: string; // the raw token; used for the prefix, NEVER stored
   key_alias?: string;
-  token?: string; // alternative name for `key`
   max_budget?: number | null;
   rpm_limit?: number | null;
   tpm_limit?: number | null;
-  // Timestamps are `unknown`-ish on purpose: imported rows may carry ISO strings
-  // where the schema declares INTEGER. Everything goes through toEpochSeconds().
-  expires?: number | string | null;
+  // Timestamps may arrive as ISO strings; everything goes through toEpochSeconds().
   expires_at?: number | string | null;
   created_at?: number | string;
 }
 
-/** Upsert a key into the D1 mirror (idempotent on key_id). */
+/** Insert or update a key (idempotent on key_id). */
 export async function upsertKey(env: Env, tokenHash: string, rec: KeyRecord): Promise<void> {
-  const raw = rec.key ?? rec.token;
+  const raw = rec.key;
   if (!raw) return;
   const now = Math.floor(Date.now() / 1000);
-  // NEVER persist the raw token. `raw_json` exists for forward-compat with fields we
-  // don't model as columns — it is not a place to keep the credential. Storing it made
-  // schema.sql's "a D1 dump never leaks live keys" false.
-  const { key: _k, token: _t, ...safeRec } = rec;
+  // NEVER persist the raw token: `raw_json` is spillover for fields without a column, and a
+  // token there would make "a D1 dump never leaks live keys" false.
+  const { key: _k, ...safeRec } = rec;
   await env.KEYS_DB.prepare(
     `INSERT INTO virtual_keys
        (key_id, token_hash, token_prefix, key_alias, created_at, expires_at,
@@ -99,7 +93,7 @@ export async function upsertKey(env: Env, tokenHash: string, rec: KeyRecord): Pr
       raw.slice(0, 12),
       rec.key_alias ?? null,
       toEpochSeconds(rec.created_at) ?? now,
-      toEpochSeconds(rec.expires_at ?? rec.expires),
+      toEpochSeconds(rec.expires_at),
       rec.max_budget ?? null,
       rec.rpm_limit ?? null,
       rec.tpm_limit ?? null,

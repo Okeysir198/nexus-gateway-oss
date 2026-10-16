@@ -5,10 +5,8 @@ interface PoolState {
   cooldownUntil: number[]; // epoch ms per secret index; 0 = available
 }
 
-/** In-isolate pool state, keyed by POOL NAME. Per-isolate is best-effort (a 429 in
- *  isolate A is not instantly visible to isolate B); that is acceptable for throughput
- *  spread on the NVIDIA 6-key pool. For strict cross-isolate cooldown, a KeyPoolDO can
- *  later own the cursor. */
+/** In-isolate pool state, keyed by POOL NAME. Per-isolate is best-effort (a 429 in one
+ *  isolate is not visible to another), which is enough to spread load across keys. */
 const pools = new Map<string, PoolState>();
 
 function state(name: string, cfg: KeyPoolConfig): PoolState {
@@ -39,9 +37,7 @@ export function pick(name: string, cfg: KeyPoolConfig, env: Env): { secret: stri
   s.cursor = (s.cursor + 1) % live.length;
   for (let step = 0; step < live.length; step++) {
     const idx = live[(s.cursor + step) % live.length];
-    // `idx` is in range by construction, but a config whose `secrets` array is shorter
-    // than its live indices would hand back undefined and send an empty bearer upstream.
-    // Skipping is strictly better than authenticating as nobody.
+    // In range by construction; skipping beats sending an empty bearer if it ever is not.
     if (idx === undefined) continue;
     const secret = cfg.secrets[idx];
     if (secret === undefined) continue;
@@ -51,7 +47,7 @@ export function pick(name: string, cfg: KeyPoolConfig, env: Env): { secret: stri
       return { secret, index: idx };
     }
   }
-  // all cooled — fall back to the cursor's key anyway (let the upstream 429 again).
+  // All cooled: use the cursor's key anyway and let the upstream 429 again.
   const idx = live[s.cursor % live.length];
   if (idx === undefined) return null;
   const secret = cfg.secrets[idx];

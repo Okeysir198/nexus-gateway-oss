@@ -16,14 +16,11 @@ export function aigUrl(env: Env, slug: string, path: string, search = ""): strin
   return `${AIG_BASE}/${env.CF_ACCOUNT_ID}/${env.AIG_GATEWAY_ID}/${slug}${path}${search}`;
 }
 
-/** Egress one chat request through Cloudflare AI Gateway. The Worker has already
- *  set the `model` field in `body` (stripped, or kept-prefixed for dynamic routes).
- *  The provider key goes in `Authorization` (BYOK per-request); AI Gateway relays
- *  it to the upstream and adds retry + cache + tracing + the dashboard log.
- *
- *  Streaming: AI Gateway passes SSE through unchanged, so we relay the body stream.
- *  No retry here for single-key routes — AI Gateway's gateway-level retry handles
- *  transient 429/5xx. Pooled routes (NVIDIA) retry across keys at the caller. */
+/** Egress one request through Cloudflare AI Gateway. `body` already carries the final
+ *  `model`. The provider key goes in `Authorization` per request and AI Gateway relays it,
+ *  adding retry, cache, tracing and the dashboard log. SSE streams through unchanged.
+ *  There is no retry here: AI Gateway's own retry covers transient 429/5xx, and pooled
+ *  routes rotate keys in `callCloudViaAIG`. */
 export async function callViaAIGateway(
   env: Env,
   slug: string,
@@ -34,10 +31,8 @@ export async function callViaAIGateway(
   path = "/v1/chat/completions",
   extraHeaders?: Record<string, string>,
 ): Promise<Response> {
-  if (!env.CF_ACCOUNT_ID || !env.AIG_GATEWAY_ID) {
-    return upstreamError(503, "AI Gateway not configured (CF_ACCOUNT_ID/AIG_GATEWAY_ID)", "server_error");
-  }
-  const url = `${AIG_BASE}/${env.CF_ACCOUNT_ID}/${env.AIG_GATEWAY_ID}/${slug}${path}`;
+  const url = aigUrl(env, slug, path);
+  if (!url) return upstreamError(503, "AI Gateway not configured (CF_ACCOUNT_ID/AIG_GATEWAY_ID)", "server_error");
 
   const headers = new Headers();
   headers.set("content-type", "application/json");
@@ -66,14 +61,11 @@ export async function callViaAIGateway(
   });
 }
 
-function json503(msg: string): Response {
-  return upstreamError(503, msg, "server_error");
-}
+const json503 = (msg: string): Response => upstreamError(503, msg, "server_error");
 
-/** Egress through AI Gateway with the route's key resolution: single-key routes
- *  make one call (AI Gateway's gateway-level retry handles transient 429/5xx);
- *  pooled routes (NVIDIA) rotate across keys on a 429, parking each in cooldown —
- *  preserving the 6-key rotation semantics that AI Gateway can't do itself. */
+/** Egress through AI Gateway with the route's key resolution: single-key routes make one
+ *  call; pooled routes (NVIDIA) rotate across keys on a 429/5xx, parking each failed key
+ *  in cooldown, which AI Gateway cannot do itself. */
 export async function callCloudViaAIG(
   cfg: GatewayConfig,
   route: ResolvedRoute,
@@ -82,9 +74,8 @@ export async function callCloudViaAIG(
   body: string,
   reqHeaders: Headers,
   timeoutMs: number,
-  /** BYOK: the caller's own provider key. When present it REPLACES both the single-secret
-   *  and the pooled key — there is nothing to rotate, since the quota being spent is the
-   *  caller's, and parking their key in our cooldown map would penalise the next caller. */
+  /** BYOK: the caller's own provider key. It replaces the single secret and the pooled key;
+   *  nothing is rotated or cooled, since the quota being spent is the caller's. */
   byok?: string,
 ): Promise<Response> {
   const entry = route.entry;
@@ -109,9 +100,8 @@ export async function callCloudViaAIG(
     // 2xx / 4xx (caller error) → return; 429/5xx → cool this key, try the next.
     if (resp.status !== 429 && resp.status < 500) return resp;
     if (key.index !== undefined) markCooldown(entry.keyPool, pool, key.index);
-    // Drop the previous failed attempt's body before overwriting it. An abandoned
-    // Response keeps its upstream stream open for the life of the request, so without
-    // this a fully-rotating pooled call leaks one connection per retry.
+    // Cancel the failed attempt's body: an abandoned Response holds its upstream stream
+    // open for the life of the request.
     await last?.body?.cancel().catch(() => {});
     last = resp;
     if (liveIndices(pool, env).length <= 1) return resp; // no other key to rotate to

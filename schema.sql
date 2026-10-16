@@ -1,15 +1,15 @@
 -- The gateway's virtual-key store. Applied with:
 --   wrangler d1 execute nexus_keys --remote --file=schema.sql
 --
--- D1 is the SOLE authority: the Worker mints and revokes keys here directly. Some columns
--- (key_alias, max_budget, ...) follow the common LiteLLM vocabulary. D1 (not KV) because auth needs strong
--- consistency — a revocation must not be servable from a stale replica.
+-- D1 is the SOLE authority: the Worker mints and revokes keys here directly. D1 (not KV)
+-- because auth needs strong consistency: a revocation must not be servable from a stale
+-- replica.
 --
 -- Only the SHA-256 of a token is stored. The raw token is returned once, at mint time,
 -- and never persisted (`upsertKey` in src/keys_db.ts strips `key`/`token` from `raw_json`).
 
 CREATE TABLE IF NOT EXISTS virtual_keys (
-  key_id        TEXT PRIMARY KEY,            -- 'key-<uuid>'; legacy rows hold the token_hash
+  key_id        TEXT PRIMARY KEY,            -- 'key-<uuid>'
   token_hash    TEXT UNIQUE NOT NULL,        -- sha256 of the sk-... token — the lookup key
   token_prefix  TEXT NOT NULL,               -- first 12 chars, for the console + debug logs
   key_alias     TEXT,
@@ -33,7 +33,7 @@ CREATE INDEX IF NOT EXISTS idx_token_hash
 CREATE INDEX IF NOT EXISTS idx_created_at
   ON virtual_keys(created_at DESC);
 
--- Provider registry. Overlays the bundled config.default.json: a row here wins, and a
+-- Provider registry. Overlays the bundled src/config.default.json: a row here wins, and a
 -- provider present ONLY here needs no deploy — which is the whole point. The bundled
 -- config remains the fallback so a fresh/empty D1 still serves traffic.
 --
@@ -65,3 +65,14 @@ CREATE TABLE IF NOT EXISTS provider_aliases (
 
 -- Console operators are not stored here: the allowlist is the OPERATOR_EMAILS var and
 -- sessions are stateless HMAC cookies keyed by ADMIN_SESSION_SECRET.
+
+-- Provider API keys entered in the console (Providers tab). AES-GCM ciphertext only; the
+-- key is derived from KEY_ENCRYPTION_SECRET or NEXUS_MASTER_KEY. `hint` is the last four
+-- characters, for display. Created on first use if you never run this file again.
+CREATE TABLE IF NOT EXISTS provider_keys (
+  secret_name TEXT PRIMARY KEY,                -- e.g. 'GROQ_API_KEY'; must be named by a provider
+  ciphertext  TEXT NOT NULL,                   -- 'v1.<iv>.<ciphertext>', base64url
+  hint        TEXT NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  updated_by  TEXT
+);

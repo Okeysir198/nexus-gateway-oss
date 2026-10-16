@@ -13,7 +13,7 @@ import { TABS } from "./view_shell";
  *                    @source-scans src/ so every utility the markup strings use is
  *                    emitted. Byte-gated by `npm run check:css` (header, freshness,
  *                    sentinels, hygiene). The layers own the shadcn component looks
- *                    (theme.css roles) and the sidebar-07 skeleton utilities.
+ *                    (theme.css roles) and the sidebar skeleton utilities.
  *    GENERATED_CSS — the rules below: the radio-tab reveal / sidebar fusion / bottom-nav
  *                    rules, GENERATED from view_shell.ts's ONE declared tab list so a
  *                    tab cannot exist with no way to be shown. Written ONLY against
@@ -28,8 +28,8 @@ import { TABS } from "./view_shell";
 /** Mechanism ids: tab-<id> / panel-<id> over view_shell.ts's ONE declared tab list.
  *  Three rule groups per tab, GENERATED: the panel reveal (through the inset — the
  *  panels live INSIDE [data-slot="sidebar-inset"], so the general-sibling must reach
- *  the inset first and descend), the sidebar's current-page fusion (the stock tint —
- *  theme.css has no brand bar), and the bottom-nav's active + focus
+ *  the inset first and descend), the sidebar's current-page fusion (the stock tint),
+ *  and the bottom-nav's active + focus
  *  treatments. */
 const MAIN_TAB_IDS: readonly string[] = TABS;
 

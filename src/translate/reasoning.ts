@@ -1,7 +1,7 @@
 import type { ReasoningDialect } from "../types";
 
-// PROVIDER-keyed (acts on the route, never a model allowlist) so the gateway stays model-agnostic. All functions
-// are pure and fail-open — a bug here must never break a request.
+// Keyed by PROVIDER dialect (never a model allowlist), so the gateway stays model-agnostic.
+// All functions are pure and fail open: a bug here must never break a request.
 
 /** Reasoning block types OpenAI chat/completions does not accept in input. */
 const REASONING_TYPES = new Set(["thinking", "redacted_thinking", "reasoning", "reasoning_content"]);
@@ -51,12 +51,9 @@ export function fixOpenaiReasoningParams(model: string, req: Record<string, unkn
   const nonReasoning = isOpenaiNonReasoning(model);
   let changed = false;
 
-  // `thinking` is an ANTHROPIC field and OpenAI's /chat/completions rejects unknown
-  // params — so it must never survive, reasoning-capable model or not. It gets here
-  // because a2o_request builds the OpenAI body with `{...req}`, copying every Anthropic
-  // field wholesale. Previously only the non-reasoning branch below cleaned up (and it
-  // only cleans `reasoning`/`reasoning_effort`), so an Anthropic-wire call to a
-  // reasoning-capable openai/* model forwarded `thinking` and drew a 400.
+  // `thinking` is an ANTHROPIC field and OpenAI rejects unknown params, so it must never
+  // survive, reasoning-capable model or not. It arrives because a2o_request copies every
+  // Anthropic field with `{...req}`.
   if (req.thinking !== undefined) {
     delete req.thinking;
     changed = true;

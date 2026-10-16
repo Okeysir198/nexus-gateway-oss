@@ -2,9 +2,8 @@
    into src/admin/theme/app.css.gen.ts; check:css byte-gates the result.
    Fonts are NOT compiled here — they ride separately as base64 `data:` faces
    in src/admin/theme/fonts.ts (CSP `font-src data:`); the family names
-   Geist / Geist Mono are what theme-strict.css's --font-sans/--font-mono
-   resolve to. theme.css clears Tailwind's stock colour palette, so a raw palette class compiles to nothing (white/black/transparent/
-   current stay). */
+   Geist / Geist Mono are what theme.css's --font-sans/--font-mono resolve to.
+   theme.css is the stock shadcn/ui neutral theme. */
 @import "tailwindcss";
 @import "./theme.css";
 @import "./chrome.css";
@@ -12,13 +11,13 @@
 /* Scan the worker sources: every utility class the HTML template literals use
    (view_*.ts, view_shell.ts, client_core.ts JS strings, login.ts). */
 @source "../src";
-// …but never the generated artifact itself: v4 auto-source would re-scan
-// app.css.gen.ts, so once-emitted utilities re-emit from their own text and
-// can never die (a text-2xl leftover survived the login redesign this way).
+/* …but never the generated artifact itself: v4 auto-source would re-scan
+   app.css.gen.ts, so once-emitted utilities re-emit from their own text and can
+   never die. */
 @source not "../src/admin/theme/app.css.gen.ts";
 
 /* Sentinels — force-emitted regardless of scanning so check:css can prove
    theme.css really embedded and an @source regression cannot silently drop
    utilities (Tailwind v4 emits NOTHING for an unresolvable utility). Keep in
    sync with the sentinel list in scripts/check-css.mjs. */
-@source inline("bg-background text-foreground bg-card text-card-foreground bg-muted text-muted-foreground bg-primary text-primary-foreground bg-cta text-cta-foreground border-border rounded-xl shadow-sm h-16 min-h-svh size-4 size-7 text-sm");
+@source inline("bg-background text-foreground bg-card text-card-foreground bg-muted text-muted-foreground bg-primary text-primary-foreground bg-secondary text-secondary-foreground border-border rounded-xl shadow-sm h-16 min-h-svh size-4 size-7 text-sm");

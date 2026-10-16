@@ -8,7 +8,6 @@
   "catchAll": "nvidia_nim",
   "aliases": {
     "_comment": "Alias → canonical. Callers migrate naming at their own pace without duplicating an entry.",
-    "nim_nvidia": "nvidia_nim",
     "hf": "huggingface",
     "cf": "cloudflare"
   },
@@ -77,7 +76,6 @@
   },
   "keyPools": {
     "nvidia_nim": {
-      "strategy": "simple-shuffle",
       "cooldownMs": 20000,
       "secrets": [
         "NVIDIA_API_KEY",

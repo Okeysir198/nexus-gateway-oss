@@ -35,7 +35,7 @@ if (rebuild.status !== 0) fail("freshness check failed");
 const sentinels = [
   ".bg-background", ".text-foreground", ".bg-card", ".text-card-foreground",
   ".bg-muted", ".text-muted-foreground", ".bg-primary", ".text-primary-foreground",
-  ".bg-cta", ".text-cta-foreground", ".border-border", ".rounded-xl", ".shadow-sm",
+  ".bg-secondary", ".text-secondary-foreground", ".border-border", ".rounded-xl", ".shadow-sm",
   ".h-16", ".min-h-svh", ".size-4", ".size-7", ".text-sm",
 ];
 for (const s of sentinels) if (!css.includes(s)) fail(`sentinel utility missing from artifact: ${s}`);

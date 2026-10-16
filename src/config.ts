@@ -1,11 +1,5 @@
 import type { Env, GatewayConfig } from "./types";
-// Two layers. The bundled file (imported at build time) is the FLOOR — it travels with
-// the code, so a fresh deploy always has a working registry and there is no
-// chicken-and-egg on first boot. The D1 `providers` table overlays it at runtime, which
-// is what makes adding a provider a console action instead of a deploy.
-// NOT KV, deliberately: this gates spend, and KV's eventual consistency means a provider
-// you just disabled could still be served.
-import bundled from "../config.default.json";
+import bundled from "./config.default.json";
 import { loadRegistry, overlay } from "./providers_db";
 
 const TTL_MS = 30_000;
@@ -15,9 +9,7 @@ const UPSTREAMS = new Set(["openai_chat", "anthropic_native"]);
 const DIALECTS = new Set(["openrouter", "openai_effort", "zai_thinking"]);
 
 /** Read a secret whose NAME came from config (a provider's `secret`, a key-pool member).
- *
- *  The double assertion is unavoidable — `Env` is a fixed interface and these names are
- *  data. One helper, so a future move to a Secrets Store binding is one edit. */
+ *  `Env` is a fixed interface and these names are data, hence the cast. */
 export function envSecret(env: Env, name: string): string {
   return String((env as unknown as Record<string, unknown>)[name] ?? "");
 }
@@ -29,13 +21,9 @@ export function configWarnings(): string[] {
   return warnings;
 }
 
-/** Validate the merged config.
- *
- *  WARN-AND-DROP, never throw on a field-level problem. This runs on the request path of
- *  a Worker serving a production custom domain: a hard throw on a typo would take 100%
- *  of traffic down, which is a far worse failure than one route with a dropped field.
- *  Structural failures (no providers{}) still throw — there is no serving the
- *  request without them. */
+/** Validate the merged config. WARN-AND-DROP: a field-level problem is reported on /health
+ *  and never thrown, because this runs on the request path and a typo must not take all
+ *  traffic down. Only a missing `providers` map throws. */
 function validateConfig(cfg: GatewayConfig): GatewayConfig {
   const w: string[] = [];
   if (!cfg.providers || typeof cfg.providers !== "object") {
@@ -45,7 +33,6 @@ function validateConfig(cfg: GatewayConfig): GatewayConfig {
   for (const [name, p] of Object.entries(cfg.providers)) {
     if (name.startsWith("_")) continue; // `_comment` keys
     const at = `provider ${name}`;
-    // The Worker's core invariant — mirrored by the guard in dispatch().
     if (!p.slug) w.push(`${at}: no slug — would bypass AI Gateway`);
     if (p.upstream && !UPSTREAMS.has(p.upstream)) w.push(`${at}: unknown upstream "${p.upstream}"`);
     if (p.reasoning !== undefined && !DIALECTS.has(p.reasoning)) {
@@ -94,22 +81,17 @@ export function bundledProviderNames(): Set<string> {
   return new Set(Object.keys(raw).filter((k) => !k.startsWith("_")));
 }
 
-/** Load gateway config: the bundled registry with ${VAR} interpolated, then the D1
- *  registry overlaid on top.
- *
- *  Bundled is the FLOOR and D1 wins — so a fresh deployment with an empty database still
- *  serves traffic, a D1 outage degrades to the bundled set rather than refusing every
- *  model, and a row can disable a bundled provider without a code change. */
+/** Load gateway config: the bundled registry (the FLOOR, shipped with the code) with the D1
+ *  registry overlaid on top (D1 wins). A fresh deployment with an empty database still
+ *  serves, a D1 outage degrades to the bundled set, and a row can disable a bundled
+ *  provider without a deploy. Not KV: this gates spend, and KV's eventual consistency
+ *  could keep serving a provider you just disabled. */
 export async function loadConfig(env: Env): Promise<GatewayConfig> {
   const now = Date.now();
   if (cache && now - cache.at < TTL_MS) return cache.cfg;
-  const base = applyDefaults(
-    interpolate(bundled as unknown as GatewayConfig, env as unknown as Record<string, unknown>),
-  );
-  const reg = await loadRegistry(env);
-  const merged = overlay(base, reg);
-  // Defaults again: a D1 row carries only what the operator set, so `upstream` and the
-  // default path must be filled in for rows the first pass never saw.
+  const base = applyDefaults(structuredClone(bundled) as unknown as GatewayConfig);
+  const merged = overlay(base, await loadRegistry(env));
+  // Defaults again: a D1 row carries only what the operator set.
   const cfg = validateConfig(applyDefaults(merged));
   cache = { cfg, at: now };
   return cfg;
@@ -119,23 +101,4 @@ export async function loadConfig(env: Env): Promise<GatewayConfig> {
  *  isolate immediately instead of after the TTL. */
 export function invalidateConfig(): void {
   cache = null;
-}
-
-/** Recursively expand ${VAR} references using the Env secrets. */
-export function interpolate<T>(value: T, env: Record<string, unknown>): T {
-  if (typeof value === "string") {
-    return value.replace(/\$\{(\w+)\}/g, (_, k) => String(env[k] ?? "")) as unknown as T;
-  }
-  if (Array.isArray(value)) {
-    return value.map((v) => interpolate(v, env)) as unknown as T;
-  }
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([k, v]) => [
-        k,
-        interpolate(v, env),
-      ]),
-    ) as unknown as T;
-  }
-  return value;
 }

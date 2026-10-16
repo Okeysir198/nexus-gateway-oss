@@ -1,6 +1,6 @@
 # Console UI (`/admin`)
 
-Three tabs: **API keys, Providers, Operators**. Server-rendered HTML, no runtime
+Two tabs: **API keys** and **Providers** (providers and their API keys in one list). Server-rendered HTML, no runtime
 dependencies, nonce-based CSP. Styling is Tailwind v4 compiled at build time.
 
 ## CSS pipeline
@@ -68,3 +68,18 @@ font file is blocked outright.
   the toast toggles a `.fade` class instead of assigning `el.style.opacity`.
 - Mutating admin API routes require the `x-nexus-console` header (CSRF defence on top of
   the SameSite=Strict session cookie).
+
+## Console and machine routes
+
+| Path | Auth | Notes |
+|---|---|---|
+| `GET /admin` | session | the console (sign-in page when signed out) |
+| `GET /login/google`, `GET /oauth/google/callback` | none | Google sign-in handshake |
+| `POST /login/password` | console header | password sign-in; 404 unless `ADMIN_PASSWORD_HASH` is set |
+| `POST /admin/logout` | none | clears the session cookie |
+| `GET /admin/whoami` | session | signed-in identity |
+| `GET/POST /admin/api/keys`, `POST /admin/api/keys/revoke` | session | virtual keys |
+| `GET/POST /admin/api/providers`, `DELETE /admin/api/providers/:name` | session | provider registry |
+| `POST /admin/api/providers/alias`, `DELETE /admin/api/providers/alias/:alias` | session | provider aliases |
+| `GET/POST /admin/api/provider-keys`, `DELETE /admin/api/provider-keys/:secret` | session | provider API keys (values are never returned) |
+| `POST /key/generate`, `/key/delete`, `GET /key/list` | master key | machine surface and recovery |

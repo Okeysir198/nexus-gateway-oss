@@ -53,8 +53,9 @@ describe("session refuses", () => {
   it("a tampered signature", async () => {
     const token = await mintSession(env(), "op@example.com");
     const [body, sig] = token.split(".");
-    // One bit over in base64url-land: swap the last two characters of the signature.
-    const flipped = sig!.slice(0, -2) + sig!.slice(-1) + sig!.slice(-2, -1);
+    // Change the FIRST signature character: always a different value, and it carries all six
+    // bits (the last character of a base64url string can be padding bits that decode alike).
+    const flipped = (sig![0] === "A" ? "B" : "A") + sig!.slice(1);
     expect(await verifySession(env(), `${body}.${flipped}`)).toBeNull();
   });
 
@@ -86,6 +87,18 @@ describe("session refuses", () => {
     expect(await verifySession(env({ ADMIN_SESSION_SECRET: "secret-b" }), token)).toBeNull();
   });
 
+  it("fails closed with no ADMIN_SESSION_SECRET: nothing is minted, and a token signed with the empty-secret key is refused", async () => {
+    await expect(mintSession(env({ ADMIN_SESSION_SECRET: undefined }), "op@example.com")).rejects.toThrow(/ADMIN_SESSION_SECRET/);
+    // Without this guard the signing key would be derived from the constant prefix alone,
+    // i.e. publicly known, and anyone could forge an operator session.
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("nexus-admin-session:v2:"));
+    const key = await crypto.subtle.importKey("raw", digest, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const body = b64url(new TextEncoder().encode(JSON.stringify({ e: "attacker@example.com", exp: Math.floor(Date.now() / 1000) + 3600 })));
+    const sig = b64url(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body))));
+    expect(await verifySession(env({ ADMIN_SESSION_SECRET: undefined }), `${body}.${sig}`)).toBeNull();
+    expect(await verifySession(env({ ADMIN_SESSION_SECRET: "" }), `${body}.${sig}`)).toBeNull();
+  });
+
   it("an unset secret, garbage, and nothing at all", async () => {
     const token = await mintSession(env({ ADMIN_SESSION_SECRET: "real" }), "op@example.com");
     expect(await verifySession(env({ ADMIN_SESSION_SECRET: undefined }), token)).toBeNull();
@@ -93,9 +106,9 @@ describe("session refuses", () => {
     expect(await verifySession(env(), null)).toBeNull();
   });
 
-  it("v1 tokens (the old NEXUS_MASTER_KEY scheme) do not verify — :v2 domain separation", async () => {
-    // A token whose payload still carries the old {u, exp, ep} shape: the :v2 key
-    // never signed it, and even a signature collision would fail the missing `e`.
+  it("a token from an older scheme does not verify — :v2 domain separation", async () => {
+    // A payload in the old {u, exp, ep} shape: the :v2 key never signed it, and even a
+    // signature collision would fail the missing `e`.
     expect(await verifySession(env(), "eyJ1IjoiYWRtaW4iLCJleHAiOjk5OTk5OTk5OTksImVwIjoxfQ.AAAA")).toBeNull();
   });
 });

@@ -12,8 +12,8 @@ import { applyReasoningDialect } from "./reasoning";
  *  chat treats reasoning as output-only); tool_use ↔ tool_calls and tool_result ↔
  *  the `tool` role; tools use Anthropic `input_schema` → OpenAI `parameters`.
  *
- *  Multi-turn `thinking` blocks are dropped here (P3 re-injects the signed chain via
- *  the ThinkingSessionDO when the route is reasoning-capable). */
+ *  Multi-turn `thinking` blocks are dropped here; the ThinkingSessionDO re-injects prior
+ *  reasoning text when the caller drives a reasoning loop. */
 
 interface AnthropicContentBlock {
   type?: string;
@@ -152,16 +152,10 @@ export function anthropicToOpenAIRequest(
  *  upstreams.** The Anthropic wire has no `system` role inside `messages` (the system
  *  prompt is the top-level `system` field), but Claude Code sends one anyway — a trailing
  *  message carrying the agent listing, skill listing and token budget, appended AFTER the
- *  user turn on every single call. This conversion used to forward that role verbatim, so
- *  the OpenAI body ended `[system, user, system]`.
- *
- *  Observed against a DeepSeek-V4 route with a reasoning-forcing prompt: with the
- *  trailing system message `reasoning_content` came back EMPTY and the full
- *  chain-of-thought was emitted in `content`; with it folded into the leading system
- *  message `reasoning_content` was populated and `content` held only the answer. The
- *  upstream's reasoning parser gives up and inlines everything — so `o2a_response` has no `reasoning_content` to map to a `thinking`
- *  block, and the caller's transcript shows the model's reasoning as a plain assistant
- *  message. The model's reasoning then shows up as a plain assistant message.
+ *  user turn on every call. Forwarded verbatim, the OpenAI body would end `[system, user,
+ *  system]`, and some upstreams' reasoning parsers then give up: `reasoning_content` comes
+ *  back empty and the chain-of-thought is inlined into `content`, so the caller sees the
+ *  model's reasoning as a plain assistant message.
  *
  *  Folding, not dropping: the content is real instruction context. Order is preserved,
  *  and a `cache_control` breakpoint on either side survives because the merge keeps the

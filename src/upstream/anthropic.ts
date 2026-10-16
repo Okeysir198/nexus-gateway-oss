@@ -8,12 +8,11 @@ import { errorResponse, upstreamError } from "../errors";
  *  Skills, Models, Managed Agents… everything `api.anthropic.com` serves under `/v1`.
  *
  *  Two ways in, both ending at the AI Gateway `anthropic` provider:
- *  - ROOT, for the siblings of `/v1/messages` a client reaches when its base URL is the
- *    bare gateway host (Claude Code's `count_tokens`): `/v1/messages/count_tokens` and
- *    `/v1/messages/batches*`. The model may carry the `anthropic/` prefix.
+ *  - ROOT, for the siblings of `/v1/messages` a client reaches when its base URL is the bare
+ *    gateway host: `/v1/messages/count_tokens` and `/v1/messages/batches*`. The model may
+ *    carry the `anthropic/` prefix.
  *  - PREFIXED `/anthropic/v1/*`, for an Anthropic SDK whose base URL is
- *    `https://<gateway>/anthropic`. It reaches every endpoint, including future ones,
- *    because nothing here enumerates them.
+ *    `https://<gateway>/anthropic`. Nothing enumerates endpoints, so new ones just work.
  *
  *  ⚠️ Files, batches and skills belong to the Anthropic ORG, not to a nexus key: any virtual
  *  key that learns another's batch/file id can read it. That is accepted, not solved. */

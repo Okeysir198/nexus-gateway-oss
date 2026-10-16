@@ -1,22 +1,22 @@
 import type { ThinkingSessionDO } from "./thinking_session_do";
 
 /**
- * Worker bindings + secrets (see .dev.vars.example). All secrets are flat strings
- * set via `wrangler secret put`; none live in wrangler.toml. Per-route secrets are
- * resolved dynamically by name from each provider's `secret` field.
+ * Worker bindings, vars and secrets (see .dev.vars.example). Provider keys are looked up
+ * dynamically by the name in each provider's `secret` field; they may come from a Worker
+ * secret or from the console (src/provider_keys.ts).
  */
 export interface Env {
   KEYS_DB: D1Database;
   THINKING_SESSION_DO: DurableObjectNamespace<ThinkingSessionDO>;
 
-  /** AI Gateway egress (gateway `nexus`). The Worker calls
+  /** AI Gateway egress. The Worker calls
    *  `gateway.ai.cloudflare.com/v1/{CF_ACCOUNT_ID}/{AIG_GATEWAY_ID}/{slug}/...`. */
   CF_ACCOUNT_ID: string;
   AIG_GATEWAY_ID: string;
 
   // admin
-  /** The gateway's own admin key — console + /key/* auth + the master fast-path.
-   *  The ONLY admin credential; D1 is the sole key authority. */
+  /** The gateway's admin key: authenticates /key/* and the master fast-path, and encrypts
+   *  console-stored provider keys unless KEY_ENCRYPTION_SECRET is set. */
   NEXUS_MASTER_KEY: string;
 
   // NVIDIA 6-key pool (any subset may be set)
@@ -38,17 +38,26 @@ export interface Env {
   /** Optional: required only when ANTHROPIC_API_KEY is not scoped to a workspace. */
   ANTHROPIC_WORKSPACE_ID?: string;
 
-  // ── Console sign-in (Google-only). All four OPTIONAL on the type ──
-  // so a missing one is a clean 503 "not configured" rather than a runtime crash, but
-  // the console is UNUSABLE until GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET and a
-  // non-empty OPERATOR_EMAILS are set — an empty allowlist denies everyone (isOperator).
-  /** Your Google OAuth client id (console sign-in). */
+  // ── Console sign-in: Google and/or a shared password. Optional on the type so a missing
+  // value is a clean 503/hidden button rather than a crash; the console is unusable until
+  // at least one method is configured.
+  /** Your Google OAuth client id. */
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   /** Comma-separated operator allowlist; trim+case-insensitive; EMPTY DENIES EVERYONE. */
   OPERATOR_EMAILS?: string;
   /** HMAC key for the console session cookie. Rotating it signs every operator out. */
   ADMIN_SESSION_SECRET?: string;
+  /** Optional shared console password, as `pbkdf2-sha256$<iter>$<salt>$<hash>` (make it with
+   *  `node scripts/hash-password.mjs`). Unset = password sign-in is off. */
+  ADMIN_PASSWORD_HASH?: string;
+  /** Optional. Encrypts console-stored provider keys; falls back to NEXUS_MASTER_KEY.
+   *  Changing the value in use makes stored keys undecryptable. */
+  KEY_ENCRYPTION_SECRET?: string;
+  /** Optional. A Cloudflare API token with AI Gateway edit permission on this account (and
+   *  nothing else). Lets the console register a custom provider in AI Gateway when you add
+   *  one; without it you register it by hand first. */
+  AIG_API_TOKEN?: string;
 }
 
 /** Upstream kinds — what wire shape the backend speaks. All of them egress through AI
@@ -67,8 +76,7 @@ export interface ProviderEntry {
   slug: string;
   /** Wire shape / handling. Defaults to `openai_chat`. */
   upstream?: UpstreamKind;
-  /** Env secret name holding the outbound bearer token. Omit once the key lives in AI Gateway
-   *  (BYOK) or for a backend that needs no credential. */
+  /** Name of the secret holding the outbound bearer token. Omit for BYOK-only routes. */
   secret?: string;
   /** Pool name — replaces `secret` for multi-key rotation. AI Gateway cannot rotate keys,
    *  so this stays Worker-side; it is why NVIDIA gets ~6x its per-key rate limit. */
@@ -91,15 +99,13 @@ export interface ProviderEntry {
   keepPrefix?: boolean;
   /** Skip every translator — body untouched (native Anthropic upstreams). */
   translate?: "none";
-  /** false = registered but refused. Lets a provider be parked without deleting its
-   *  config (and, once the registry is in D1, toggled from the console). */
+  /** false = registered but refused. Lets a provider be parked without deleting it. */
   enabled?: boolean;
-  /** Free-text note surfaced in the admin console. */
+  /** Free-text note shown in the console. */
   note?: string;
 }
 
 export interface KeyPoolConfig {
-  strategy: "simple-shuffle";
   cooldownMs: number;
   secrets: string[];
 }

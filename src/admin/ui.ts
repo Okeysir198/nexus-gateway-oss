@@ -1,18 +1,15 @@
-/** Static shadcn/ui-style class vocabulary — the cva strings a React consumer gets from
+import { I } from "./icons";
+
+/** Static shadcn/ui-style class vocabulary: the strings a React consumer gets from
  *  `buttonVariants({variant})`, hand-applied because this console is server-rendered
  *  HTML, not React.
  *
- *  Rules:
- *  - The strings follow the shadcn/ui component sources; do not retype them from memory
- *    or "improve" them — re-diff against upstream shadcn/ui when you change one.
- *  - Every element also carries the data-slot / data-variant / data-size attributes
- *    the React components emit — theme.css keys on some of them (focus rings,
+ *  - Follow the shadcn/ui component sources; re-diff against them when you change one.
+ *  - Every element also carries the data-slot / data-variant / data-size attributes the
+ *    React components emit; theme.css keys on some of them (focus rings,
  *    [data-sidebar="menu-button"][data-active]).
- *  - ONE CTA per view
- *    ("Generate" on keys): class `bg-cta text-cta-foreground hover:bg-cta/90` — the
- *    amber is load-bearing scarcity: keep to one CTA per view.
- *  - NO backticks and no ${} may survive into any string that lands inside the page's
- *    template literals — test/page_render pins it. */
+ *  - No backticks and no ${} may survive into any string that lands inside the page's
+ *    template literals; test/page_render pins it. */
 
 // ── Button ────────────────────────────────────────
 export const BTN =
@@ -27,54 +24,32 @@ export const BTN_VARIANTS: Record<string, string> = {
   secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
   ghost: "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
   link: "text-primary underline-offset-4 hover:underline",
-  // The theme's reserved amber — the ONE loud action per view.
-  cta: "bg-cta text-cta-foreground hover:bg-cta/90",
 };
 
 export const BTN_SIZES: Record<string, string> = {
   default: "h-9 px-4 py-2 has-[>svg]:px-3",
   xs: "h-6 gap-1 rounded-md px-2 text-xs has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
   sm: "h-8 gap-1.5 rounded-md px-3 has-[>svg]:px-2.5",
-  lg: "h-10 rounded-md px-6 has-[>svg]:px-4",
   icon: "size-9",
-  "icon-xs": "size-6 rounded-md [&_svg:not([class*='size-'])]:size-3",
-  "icon-sm": "size-8",
-  "icon-lg": "size-10",
 };
 
 // ── Badge  ──────────────────────────────────────────
 export const BADGE =
-  "inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&>svg]:pointer-events-none [&>svg]:size-3";
+  "inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&>svg]:pointer-events-none [&>svg]:size-3";
 
-export const BADGE_VARIANTS: Record<string, string> = {
-  default: "bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
-  secondary: "bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/90",
-  destructive:
-    "bg-destructive text-white focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40 [a&]:hover:bg-destructive/90",
-  outline: "border-border text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
-};
-
-export interface BadgeTone {
+interface BadgeTone {
   classes: string;
   variant: string;
 }
-export interface BadgeToneMap {
-  success: BadgeTone;
-  danger: BadgeTone;
-  warning: BadgeTone;
-  secondary: BadgeTone;
-  [tone: string]: BadgeTone | undefined;
-}
 
-/** The tone map every status word resolves through (client_core's chip() mirrors it):
- *  ok → success pair, danger → destructive, warn → warning, muted → secondary.
- *  theme.css registers --success/--warning, so the utilities exist even though the
- *  stock cva has no such variants — data-variant records the tone for the tests. */
-export const BADGE_TONES: BadgeToneMap = {
-  success: { classes: "bg-success text-success-foreground", variant: "success" },
-  danger: { classes: "bg-destructive text-white", variant: "destructive" },
-  warning: { classes: "bg-warning text-warning-foreground", variant: "warning" },
-  secondary: { classes: "bg-secondary text-secondary-foreground", variant: "secondary" },
+/** The tone map every status word resolves through (client_core's chip() reads it).
+ *  Tones map onto the stock badge variants: success = default, warning = outline,
+ *  danger = destructive, secondary = secondary. */
+export const BADGE_TONES: Record<string, BadgeTone> = {
+  success: { classes: "border-transparent bg-primary text-primary-foreground", variant: "default" },
+  danger: { classes: "border-transparent bg-destructive text-white dark:bg-destructive/60", variant: "destructive" },
+  warning: { classes: "text-foreground", variant: "outline" },
+  secondary: { classes: "border-transparent bg-secondary text-secondary-foreground", variant: "secondary" },
 };
 
 // ── Card  ────────────────────────────────────────────
@@ -85,7 +60,6 @@ export const CARD_TITLE = "leading-none font-semibold";
 export const CARD_DESCRIPTION = "text-sm text-muted-foreground";
 export const CARD_ACTION = "col-start-2 row-span-2 row-start-1 self-start justify-self-end";
 export const CARD_CONTENT = "px-6";
-export const CARD_FOOTER = "flex items-center px-6 [.border-t]:pt-6";
 
 // ── Input  ──────────────────────────────────────────
 export const INPUT =
@@ -117,9 +91,6 @@ export const TABLE_CELL =
 // ── Empty  ──────────────────────────────────────────
 export const EMPTY =
   "flex min-w-0 flex-1 flex-col items-center justify-center gap-6 rounded-lg border-dashed p-6 text-center text-balance md:p-12";
-export const EMPTY_TITLE = "text-lg font-medium tracking-tight";
-export const EMPTY_DESCRIPTION =
-  "text-sm/relaxed text-muted-foreground [&>a]:underline [&>a]:underline-offset-4 [&>a:hover]:text-primary";
 
 // ── Breadcrumb  ────────────────────────────────
 export const BREADCRUMB_LIST =
@@ -150,8 +121,8 @@ export const SIDEBAR_GROUP_CONTENT = "w-full text-sm";
 export const SIDEBAR_MENU = "flex w-full min-w-0 flex-col gap-1";
 export const SIDEBAR_MENU_ITEM = "group/menu-item relative";
 /** The cva BASE of sidebar-menu-button, before the size variant. The two exported
- *  constants below append the stock size suffixes verbatim (preview/src/ui/sidebar.tsx:
- *  size.default = "h-8 text-sm", size.lg = "h-12 text-sm group-data-[collapsible=icon]:p-0!"). */
+ *  constants below append the stock size suffixes verbatim (default: "h-8 text-sm";
+ *  lg: "h-12 text-sm group-data-[collapsible=icon]:p-0!"). */
 const SIDEBAR_MENU_BUTTON_BASE =
   "peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm ring-sidebar-ring outline-hidden transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0";
 export const SIDEBAR_MENU_BUTTON = SIDEBAR_MENU_BUTTON_BASE + " h-8 text-sm";
@@ -166,3 +137,25 @@ export const SIDEBAR_MENU_BUTTON_LG =
 export const SIDEBAR_TRIGGER = BTN + " " + BTN_VARIANTS.ghost + " size-7";
 export const SIDEBAR_INSET =
   "relative flex w-full flex-1 flex-col bg-background md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2";
+
+// ── Password field with a show/hide button ─────────────────────────────────────────
+// The stock shadcn pattern: a relative wrapper, the Input with right padding, and a ghost
+// icon Button pinned inside. PW_TOGGLE_JS is one delegated handler shared by the console
+// and the sign-in page.
+export const PW_BUTTON =
+  '<button type="button" data-pw-toggle aria-label="Show password" aria-pressed="false" data-slot="button" data-variant="ghost" data-size="icon" class="' +
+  BTN +
+  ' absolute inset-y-0 right-0 w-9 rounded-l-none text-muted-foreground hover:text-foreground">' +
+  '<span data-pw-on>' + I.eye + '</span><span data-pw-off hidden>' + I.eyeOff + "</span></button>";
+
+/** Wrap an <input> (already carrying type="password") with the toggle button. */
+export function pwWrap(inputHtml: string): string {
+  return '<div class="relative">' + inputHtml + PW_BUTTON + "</div>";
+}
+
+export const PW_TOGGLE_JS =
+  "document.addEventListener('click',function(e){var b=e.target.closest('[data-pw-toggle]');if(!b)return;" +
+  "var i=b.parentElement.querySelector('input');if(!i)return;var show=i.type==='password';" +
+  "i.type=show?'text':'password';b.setAttribute('aria-pressed',show?'true':'false');" +
+  "b.setAttribute('aria-label',show?'Hide password':'Show password');" +
+  "b.querySelector('[data-pw-on]').hidden=show;b.querySelector('[data-pw-off]').hidden=!show;});";

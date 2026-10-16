@@ -7,7 +7,6 @@ import type { Env, KeyPoolConfig } from "../src/types";
  *  and cooldown state is module-level and shared across a process. */
 
 const pool: KeyPoolConfig = {
-  strategy: "simple-shuffle",
   cooldownMs: 20_000,
   secrets: ["K1", "K2", "K3"],
 };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { outboundModel, resolveRoute, splitModel } from "../src/router";
-import bundled from "../config.default.json";
+import bundled from "../src/config.default.json";
 import type { GatewayConfig } from "../src/types";
 
 /** Model resolution is on the path of EVERY request and is a pure function over plain

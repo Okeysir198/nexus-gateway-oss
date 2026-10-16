@@ -17,12 +17,27 @@ export function errorResponse(status: number, message: string, wire: Wire, type 
   });
 }
 
-export function json(status: number, body: unknown): Response {
+export function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...headers },
   });
 }
+
+/** The request body as a JSON object, or null when it is missing, malformed, or not an
+ *  object (an array, a string, `null`). Callers that accept an empty body use `?? {}`. */
+export async function readJsonObject<T extends object = Record<string, unknown>>(request: Request): Promise<T | null> {
+  try {
+    const parsed: unknown = await request.json();
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+const INVALID_BODY = { error: { message: "invalid JSON body" } };
+/** The 400 every JSON-taking route answers when readJsonObject gave null. */
+export const invalidBody = (): Response => json(400, INVALID_BODY);
 
 /** An upstream/infrastructure failure in the OpenAI envelope.
  *

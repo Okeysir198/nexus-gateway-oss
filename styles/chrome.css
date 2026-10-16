@@ -4,6 +4,7 @@
    own — roles and utilities only (check:css enforces no hex, no palette). */
 
 :root { color-scheme: light; }
+.dark { color-scheme: dark; }
 
 /* The sidebar-07 skeleton's width knobs. Declared HERE, not in a style=
    attribute: the console's CSP nonce covers <style> and <script> blocks but

@@ -6,6 +6,7 @@ import { pickKey } from "./upstream/openai";
 import { callCloudViaAIG, callViaAIGateway } from "./upstream/aigateway";
 import { anthropicHeaders, anthropicSurface, proxyAnthropic } from "./upstream/anthropic";
 import { health } from "./health";
+import { withProviderKeys } from "./provider_keys";
 import { applyReasoningDialect } from "./translate/reasoning";
 import { anthropicToOpenAIRequest } from "./translate/a2o_request";
 import { openaiToAnthropicResponse, type OpenAIResponse } from "./translate/o2a_response";
@@ -14,9 +15,9 @@ import { conversationDO, deriveConversationId, injectPriorThinking } from "./tra
 import { keyDelete, keyGenerate, keyList } from "./key_webhook";
 import { adminPage } from "./admin/page";
 import { adminApi } from "./admin/routes";
-import { googleCallback, googleStart, loginPage, requireAdmin } from "./admin/login";
+import { googleCallback, googleStart, loginPage, passwordLogin, requireAdmin } from "./admin/login";
 import { errorResponse, json } from "./errors";
-import type { Env, GatewayConfig, ProviderEntry, Wire } from "./types";
+import type { AnthropicMessagesRequest, Env, GatewayConfig, ProviderEntry, Wire } from "./types";
 
 export { ThinkingSessionDO };
 
@@ -33,23 +34,22 @@ export default {
     try {
       if (path === "/health" || path === "/") return await health(env, request);
       if (path === "/v1/models") return await models(env);
-      // The Google sign-in handshake — OPEN paths, before any console gate. Google
-      // identifies; OPERATOR_EMAILS (fail-closed) authorizes; the cookie is minted only
-      // after both agree. GET /admin/login redirects to the console page, which
-      // shows the Google sign-in when unauthenticated.
+      // Sign-in handshakes (Google, shared password) are OPEN paths, before any console
+      // gate: each verifies a credential itself and only then mints the session cookie.
       if (path === "/login/google" && request.method === "GET") return googleStart(env, request);
+      if (path === "/login/password" && request.method === "POST") return await passwordLogin(env, request);
       if (path === "/oauth/google/callback" && request.method === "GET") return await googleCallback(env, request);
       if ((path === "/admin" || path === "/admin/login") && request.method === "GET") {
         // Signed in → the console. Otherwise the sign-in page. The page itself never
         // carries a secret; every action behind it is re-authorized server-side.
         const id = await requireAdmin(env, request);
-        if (!id.ok) return loginPage(request);
+        if (!id.ok) return loginPage(env, request);
         return path === "/admin/login"
           ? Response.redirect(new URL("/admin", request.url).toString(), 302)
           : adminPage(request);
       }
 
-      // /admin/* — console backend (session-gated: Google sign-in session cookie).
+      // /admin/* — console backend (session-gated).
       const adminRes = await adminApi(env, request, path);
       if (adminRes) return adminRes;
 
@@ -60,12 +60,10 @@ export default {
       if (path === "/key/list" && request.method === "GET") return await keyList(env, request);
 
       // ── THE virtual-key gate ────────────────────────────────────────────────────
-      // Everything past this point is D1-authed, once, in one place. A gate that must be
-      // remembered per route is a gate that will eventually be forgotten; this one covers
-      // any route added below it by default.
-      //
-      // ⚠️ The token must be in the Authorization header, `x-api-key`, or `?api_key=`
-      // (see extractToken).
+      // Everything past this point is authenticated once, in one place. A gate that must be
+      // remembered per route will eventually be forgotten; this one covers any route added
+      // below it by default. The token may arrive in `Authorization`, `x-api-key` or
+      // `?api_key=` (see extractToken).
       // Narrowed to a non-null Wire so the chat dispatch below needs no re-check.
       const chatWire = wire !== null && CHAT_PATHS.has(path) ? wire : null;
       // Native Anthropic surfaces beyond chat (count_tokens, batches, files, /anthropic/v1/*).
@@ -73,30 +71,30 @@ export default {
       if (!chatWire && !anthSurface) return json(404, { error: "not found", path });
 
       const auth = await authenticate(env, request);
-      // BYOK: a token that is not a D1 virtual key may still be the caller's OWN cloud
-      // provider key, forwarded upstream verbatim (see dispatch). Allowed on the CHAT
-      // paths only. `byokToken` is unset for "missing API key" and for a D1 outage, so
-      // neither degrades into an open door.
-      const byok = (chatWire || anthSurface) && !auth.ok ? auth.byokToken : undefined;
+      // BYOK: a token that is not a D1 virtual key may be the caller's OWN provider key,
+      // forwarded upstream as their credential (see dispatch). `byokToken` is unset for a
+      // missing key and for a D1 outage, so neither degrades into an open door.
+      const byok = !auth.ok ? auth.byokToken : undefined;
       if (!auth.ok && !byok) return errorResponse(401, auth.reason ?? "unauthorized", anthSurface ? "anthropic" : wire ?? "openai");
 
-      // Anthropic is a CLOUD provider, so BYOK applies (the caller's own Anthropic key).
-      if (anthSurface) {
-        if ("denied" in anthSurface) return errorResponse(403, anthSurface.denied, "anthropic", "permission_error");
-        return await proxyAnthropic(await loadConfig(env), env, request, anthSurface, url.search, byok);
+      if (anthSurface && "denied" in anthSurface) {
+        return errorResponse(403, anthSurface.denied, "anthropic", "permission_error");
       }
 
+      // Provider keys entered in the console are laid over env here, once, so everything
+      // below reads env[secretName] without caring where the value came from.
       const cfg = await loadConfig(env);
-      return await dispatch(cfg, env, ctx, request, chatWire!, cfg.requestTimeoutMs ?? DEFAULT_TIMEOUT_MS, byok);
+      const kenv = await withProviderKeys(env, cfg);
+
+      // Anthropic is a CLOUD provider, so BYOK applies (the caller's own Anthropic key).
+      if (anthSurface) return await proxyAnthropic(cfg, kenv, request, anthSurface, url.search, byok);
+      return await dispatch(cfg, kenv, ctx, request, chatWire!, cfg.requestTimeoutMs ?? DEFAULT_TIMEOUT_MS, byok);
     } catch (e) {
       const w = wire ?? "openai";
       return errorResponse(500, `gateway error: ${e}`, w, "internal_server_error");
     }
   },
 
-  // No `scheduled` handler, and no [triggers] block in wrangler.toml. If a cron is ever
-  // added, add both in the same commit — a trigger without a handler fires into a Worker
-  // that can't handle it.
 } satisfies ExportedHandler<Env>;
 
 /** Unified dispatch: resolve the model → a provider, then forward through AI Gateway. */
@@ -112,35 +110,36 @@ async function dispatch(
   byok?: string,
 ): Promise<Response> {
   const bodyText = await request.text();
-  let parsed: { model?: string } = {};
+  let parsed: unknown;
   try {
     parsed = JSON.parse(bodyText);
   } catch {
     return errorResponse(400, "invalid JSON body", wire);
   }
-  const model = parsed.model;
-  if (!model) return errorResponse(400, "missing `model` field", wire);
+  // `null`, an array or a scalar parses fine but is not a request body.
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return errorResponse(400, "request body must be a JSON object", wire);
+  }
+  const reqBody = parsed as Record<string, unknown>;
+  const model = reqBody.model;
+  if (typeof model !== "string" || !model) return errorResponse(400, "missing `model` field", wire);
 
   const route = resolveRoute(cfg, model);
   if (!route) return errorResponse(404, `no route for model: ${model}`, wire, "not_found_error");
   const entry = route.entry;
-  // Everything after the provider prefix. The whole string for a catch-all hit, since
-  // to that provider there was never a prefix to strip — or for a `keepPrefix` entry
-  // (AI Gateway dynamic routes), where the prefix IS part of the model id upstream.
+  // The model id sent upstream: the remainder after the prefix, or the whole string for a
+  // `keepPrefix` entry (AI Gateway dynamic routes).
   const sendModel = outboundModel(route, model);
 
-  // INVARIANT: every provider egresses through Cloudflare AI Gateway. Enforced here, not
-  // just asserted in config, so an entry added without a slug fails loudly at the edge
-  // instead of quietly opening a direct path that skips AIG's logging, caching and rate
-  // limiting. The Worker has no non-AIG egress.
+  // INVARIANT: every provider egresses through Cloudflare AI Gateway. A route without a
+  // slug fails loudly here rather than skipping AI Gateway's logging, caching and limits.
   if (!entry.slug) {
     console.error(`provider ${route.provider} has no slug — refusing to bypass AI Gateway`);
     return errorResponse(500, `provider ${route.provider} is misconfigured (no AI Gateway slug)`, wire, "internal_server_error");
   }
 
-  // A dynamic route picks its own provider inside AI Gateway, so the caller cannot know
-  // which credential the hop needs — BYOK is meaningless here and would surface as a
-  // confusing upstream 401. Require a virtual key and spend the Worker's own pool key.
+  // A dynamic route picks its own provider inside AI Gateway, so a caller cannot know which
+  // credential the hop needs. Require a virtual key and spend the Worker's own key.
   if (byok && entry.keepPrefix) {
     return errorResponse(401, `provider ${route.provider} requires a nexus virtual key (the upstream credential is chosen by the route, not the caller)`, wire);
   }
@@ -150,10 +149,9 @@ async function dispatch(
     if (wire !== "anthropic") {
       return errorResponse(400, `provider ${route.provider} is Anthropic-native — use /v1/messages`, wire);
     }
-    // Strip the route prefix — the upstream wants the bare model id (glm-4.6), not
-    // zai_anthropic/glm-4.6. Body is otherwise Anthropic-shape, forwarded verbatim.
-    const anthReq = JSON.parse(bodyText) as Record<string, unknown>;
-    anthReq.model = route.modelId;
+    // The upstream wants the bare model id (glm-4.6), not zai_anthropic/glm-4.6; the body
+    // is otherwise forwarded verbatim.
+    const anthReq = { ...reqBody, model: route.modelId };
     const key = byok ?? pickKey(cfg, route, env)?.value;
     if (!key) return errorResponse(503, `no API key for provider ${route.provider}`, wire);
     return callViaAIGateway(
@@ -168,47 +166,36 @@ async function dispatch(
     );
   }
 
-  // ── AI Gateway egress: cloud providers and the NVIDIA pool — i.e. everything else ──
-  //
-  // There is no `else` here on purpose. Combined with the guard above, the Worker has NO
-  // code path that reaches a chat provider except through AI Gateway — the invariant is
-  // structural, not a convention someone must remember. Re-adding a direct fetch here
-  // would silently reopen that hole.
+  // ── AI Gateway egress: every other provider (cloud and the key pool) ──
+  // Deliberately the only remaining branch: there is no code path to a chat provider that
+  // does not go through AI Gateway. Do not add a direct fetch here.
   const aigSlug = entry.slug;
   if (wire === "openai") {
-    const reqObj = JSON.parse(bodyText) as Record<string, unknown>;
-    reqObj.model = sendModel;
+    const reqObj: Record<string, unknown> = { ...reqBody, model: sendModel };
     if (entry.dropTools) delete reqObj.tools;
     applyReasoningDialect(entry.reasoning, sendModel, reqObj);
     return callCloudViaAIG(cfg, route, env, aigSlug, JSON.stringify(reqObj), request.headers, timeoutMs, byok);
   }
-  return anthropicChat(env, ctx, entry, sendModel, request, bodyText, (body) =>
+  return anthropicChat(env, ctx, entry, sendModel, request, reqBody as unknown as AnthropicMessagesRequest, (body) =>
     callCloudViaAIG(cfg, route, env, aigSlug, body, request.headers, timeoutMs, byok),
   );
 }
 
 /** Anthropic-wire path: translate the request, egress via the supplied closure, then
- *  translate the response (streamed or blocking) back to the Anthropic wire.
- *
- *  Takes the egress as a CLOSURE rather than a route/config pair so the caller decides
- *  which AI Gateway slug and timeout apply — this function does not need to know. */
+ *  translate the response (streamed or blocking) back to the Anthropic wire. */
 async function anthropicChat(
   env: Env,
   ctx: ExecutionContext,
   entry: ProviderEntry,
   sendModel: string,
   request: Request,
-  bodyText: string,
+  reqObj: AnthropicMessagesRequest,
   egress: (body: string) => Promise<Response>,
 ): Promise<Response> {
-  const reqObj = JSON.parse(bodyText) as import("./types").AnthropicMessagesRequest;
   const openaiReq = anthropicToOpenAIRequest(reqObj, sendModel, entry.reasoning);
 
-  // Reasoning session state (ThinkingSessionDO).
-  // Gate on what the CLIENT sent, not on the route being reasoning-capable:
-  // gating on the route would instantiate a Durable Object for every request. The DO
-  // exists to carry thinking blocks across turns; if the caller isn't driving a
-  // reasoning loop there is nothing to carry.
+  // Reasoning session state (ThinkingSessionDO). Gate on what the CLIENT sent, not on the
+  // route: gating on the route would create a Durable Object for every request.
   const reasoningCapable = reqObj.thinking !== undefined;
   let conversationId: string | null = null;
   if (reasoningCapable) {

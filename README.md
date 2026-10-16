@@ -1,173 +1,117 @@
 # nexus-gateway
 
 A Cloudflare Worker that puts cloud LLM providers behind one OpenAI- and
-Anthropic-compatible API with per-caller virtual keys. Every request egresses through
-Cloudflare AI Gateway, so you get uniform logging, caching, rate limiting and analytics in
-one dashboard.
+Anthropic-compatible API, with per-caller virtual keys and an operator console. Every
+request goes out through Cloudflare AI Gateway, so logging, caching, rate limiting and
+analytics live in one dashboard.
 
-Rules that break things quietly are in [`docs/invariants.md`](docs/invariants.md).
+- **Two wires.** OpenAI `/v1/chat/completions` and Anthropic `/v1/messages`, with a
+  translator between them (streaming, tools and reasoning included).
+- **Any cloud provider.** A provider is a model prefix mapped to an AI Gateway slug. Add
+  one, and its API key, from the console with no deploy.
+- **Virtual keys** in D1: mint, revoke and expire keys per caller.
+- **BYOK.** A caller may send a provider's own key instead of a virtual key.
+- **Anthropic native surfaces** (`count_tokens`, batches, files, ...) pass through
+  untouched.
+- **Operator console** at `/admin`, in light or dark: API keys, providers and their keys.
 
-## What it does
+[Quick start](#quick-start) · [Call the API](#call-the-api) · [Claude Code](#use-with-claude-code) ·
+[Configure](#configure) · [How it works](#how-it-works) · [Development](#development)
 
-- **Two wires.** OpenAI `/v1/chat/completions` and native Anthropic `/v1/messages`, with a
-  hand-rolled translator between them (streaming, tools and reasoning included).
-- **Any cloud provider.** Each is a route mapping a model prefix to an AI Gateway provider
-  slug. Add one from the console with no deploy.
-- **Everything through AI Gateway.** There is no direct-fetch path to a provider.
-- **Virtual keys** in D1: mint, revoke, expire, per caller.
-- **BYOK.** A caller may send a cloud provider's own key instead of a virtual key.
-- **Anthropic native surfaces** (`count_tokens`, batches, files and the rest of the
-  Anthropic API) forwarded through the AI Gateway `anthropic` provider.
-- **Operator console** at `/admin` with Google-only sign-in (an `OPERATOR_EMAILS`
-  allowlist, fail-closed): API keys, providers and the operator list, in light or dark.
+## Quick start
 
-## Endpoints
+You need a Cloudflare account, Node 20+, and a domain on Cloudflare (or use `--workers-dev`).
 
-| Path | Auth | Notes |
-|---|---|---|
-| `POST /v1/chat/completions`, `/v1/completions` | virtual key **or BYOK¹** | OpenAI wire |
-| `POST /v1/messages` | virtual key **or BYOK¹** | Anthropic wire (translated, or native passthrough) |
-| `POST /v1/messages/count_tokens`, `/v1/messages/batches*` | virtual key **or BYOK¹** | native Anthropic |
-| `/anthropic/v1/*` | virtual key **or BYOK¹** | native Anthropic, for an SDK whose base URL is `https://<your-host>/anthropic` |
-| `GET /v1/models` | none | advertised model prefixes |
-| `GET /health` (`?probe=1`) | none | route table, config warnings, per-provider up/down |
-| `GET /admin` | session | operator console (sign-in page when signed out) |
-| `GET /login/google`, `GET /oauth/google/callback` | none | Google sign-in handshake |
-| `POST /admin/logout` | none | clears the session cookie |
-| `GET /admin/whoami`, `GET /admin/api/users` | session | signed-in email; the operator allowlist (read-only) |
-| `GET/POST /admin/api/keys`, `POST /admin/api/keys/revoke` | session | console key operations |
-| `GET/POST /admin/api/providers`, `DELETE /admin/api/providers/:name` | session | provider registry |
-| `POST /key/generate`, `/key/delete`, `GET /key/list` | master key | machine surface and recovery |
+```bash
+npm install
+export CLOUDFLARE_API_TOKEN=...                      # permissions below
+node scripts/deploy.mjs --domain gateway.example.com
+```
 
-¹ **BYOK**: on these paths you may send a *cloud provider's own* key instead of a nexus
-virtual key, in the same `Authorization: Bearer` slot. The token misses in D1 and is
-forwarded upstream as your credential (your quota, your rate limit; the NVIDIA key
-rotation does not apply). No virtual key is needed:
+The command:
+
+- creates a D1 database with the schema, and an AI Gateway with the custom providers the
+  bundled config uses;
+- deploys the Worker on your domain and sets its secrets;
+- checks the live URL, then prints the console address and a generated password;
+- is safe to run again, and never touches a Worker, database or gateway it did not create.
+
+Options:
+
+- `--workers-dev`: serve on a `workers.dev` URL instead of a domain.
+- `--name <name>`: Worker name (default `nexus-gateway-oss`).
+- `--destroy`: delete exactly what the script created.
+- `--account-id`, `--yes`: see `node scripts/deploy.mjs --help`.
+
+API token (My Profile > API Tokens):
+
+- Account: *Workers Scripts: Edit*, *D1: Edit*, *AI Gateway: Edit*.
+- Your domain's zone: *Workers Routes: Edit*, *DNS: Edit*, *Zone: Read*.
+- If a call is refused, the script stops and names the missing permission.
+
+Local state:
+
+- `.deploy/` (gitignored) holds the generated wrangler config, a record of what was created,
+  and the master key and console password (mode 600; Worker secrets cannot be read back).
+- Back it up, or you will need to rotate the secrets.
+- To set everything up by hand instead, see [`docs/manual-setup.md`](docs/manual-setup.md).
+
+### First steps
+
+Open `https://<your-host>/admin` and sign in with the printed password.
+
+1. **Providers:** paste the API key on each provider's row. Its status changes from *Needs key* to *Ready*.
+2. **API keys > Generate:** mint a key for your callers. The raw token is shown once.
+
+## Call the API
+
+Point any OpenAI or Anthropic client at `https://<your-host>` with a virtual key:
 
 ```bash
 curl https://<your-host>/v1/chat/completions \
-  -H "Authorization: Bearer <your-openrouter-key>" \
-  -H 'content-type: application/json' \
+  -H "Authorization: Bearer <virtual key>" -H 'content-type: application/json' \
   -d '{"model":"openrouter/deepseek/deepseek-v4","messages":[{"role":"user","content":"hi"}]}'
 ```
 
-`dynamic/*` routes refuse BYOK. Because BYOK shares the `Authorization` slot, a **revoked or
-mistyped virtual key** is no longer rejected at the edge: it goes upstream and you get the
-provider's `401`.
+| Path | Notes |
+|---|---|
+| `POST /v1/chat/completions`, `/v1/completions` | OpenAI wire |
+| `POST /v1/messages` | Anthropic wire (translated, or native passthrough) |
+| `POST /v1/messages/count_tokens`, `/v1/messages/batches*` | native Anthropic |
+| `/anthropic/v1/*` | native Anthropic, for an SDK whose base URL is `https://<your-host>/anthropic` |
+| `GET /v1/models` | advertised model prefixes (no key) |
+| `GET /health` (`?probe=1`) | route table, config warnings, per-provider up/down (no key) |
 
-## Request flow
+### Models
 
-```
-client
-  |  Authorization: Bearer sk-...          (virtual key)
-  v
-Worker  |- authenticate -> D1 (SHA-256 hash lookup, 60s isolate cache)
-        |- resolveRoute(model) -> route entry            src/router.ts
-        |- translate if the wire differs from upstream   src/translate/
-        '- egress, ALWAYS, to Cloudflare AI Gateway (your gateway)
-                                   |
-                                   |- native slug:  groq, openai, openrouter,
-                                   |                huggingface, anthropic, workers-ai
-                                   '- custom slug:  custom-nvidia (key rotation),
-                                                    custom-zai, custom-zai-anthropic
-```
-
-## Routing
-
-Address a model as **`{provider}:{model}`** (or `{provider}/{model}`). The prefix is split
-at the FIRST separator and looked up in the provider registry; everything after it is the
-model id sent upstream.
+- Address a model as **`{provider}:{model}`** or **`{provider}/{model}`**.
+- The prefix is split at the first separator and looked up in the provider registry; the rest
+  is the model id sent upstream.
+- The registry is also the allowlist: an unregistered prefix cannot be reached.
 
 ```
-nim_nvidia:meta/llama-3.1-8b    -> provider nim_nvidia, model "meta/llama-3.1-8b"
+nvidia_nim:meta/llama-3.1-8b    -> provider nvidia_nim, model "meta/llama-3.1-8b"
 openrouter/deepseek/deepseek-v4 -> provider openrouter, model "deepseek/deepseek-v4"
 meta/llama-3.1-8b-instruct      -> unknown prefix -> catch-all, whole string preserved
 ```
 
-The registry is **also the allowlist**: a prefix that is not registered cannot be reached,
-which stops a virtual key spending against a provider nobody enabled.
-
 | Prefix | Goes to |
 |---|---|
-| `nvidia_nim/*`, `nim_nvidia/*` | NVIDIA NIM (multi-key rotation) |
+| `nvidia_nim/*` | NVIDIA NIM (multi-key rotation) |
 | `openrouter/*`, `groq/*`, `openai/*` | those providers |
 | `huggingface/*`, `hf/*` | Hugging Face |
-| `zai/*` | Z.AI GLM (coding endpoint) |
-| `zai_anthropic/*` | Z.AI Anthropic-native: **no translation**, signed thinking survives |
-| `anthropic/*` | Anthropic API, native: no translation, signed thinking survives |
 | `cloudflare/*`, `cf/*` | Workers AI |
+| `zai/*` | Z.AI GLM (coding endpoint) |
+| `zai_anthropic/*`, `anthropic/*` | Anthropic-native: **no translation**, signed thinking survives |
 | `dynamic/{route}` | an AI Gateway dynamic route ([`docs/dynamic-routes.md`](docs/dynamic-routes.md)) |
-| `*` | NVIDIA NIM (catch-all, whole model string) |
+| anything else | NVIDIA NIM (catch-all, whole model string) |
 
-Aliases let callers migrate at their own pace: `nim_nvidia` is `nvidia_nim`, `hf` is
-`huggingface`, `cf` is `cloudflare`. Edit the bundled table in `config.default.json`; it
-is the floor, and rows in D1 override it (see Adding a provider).
+- The bundled table in `src/config.default.json` is the floor; rows added in the console
+  override it.
 
-## Quick start (your own domain)
+### Virtual keys and BYOK
 
-Prerequisites: a Cloudflare account, Node 20+, and a Google Cloud project for console
-sign-in.
-
-1. **Install.**
-   ```bash
-   npm install
-   cp .dev.vars.example .dev.vars     # local dev secrets
-   ```
-2. **Create the key database.**
-   ```bash
-   npx wrangler d1 create nexus_keys                              # prints a database_id
-   npx wrangler d1 execute nexus_keys --remote --file=schema.sql
-   ```
-3. **Create an AI Gateway** in the Cloudflare dashboard (AI > AI Gateway). Note its name:
-   that is `AIG_GATEWAY_ID`. The Worker sends no `cf-aig-authorization` header, so leave
-   gateway authentication off.
-4. **Register the custom AI Gateway providers** the bundled config references (below).
-   Native providers (`groq`, `openai`, `openrouter`, `huggingface`, `anthropic`,
-   `workers-ai`) need no registration.
-5. **Edit `wrangler.toml`:** paste the D1 `database_id`, optionally uncomment `routes` and
-   set your hostname (`custom_domain = true`), and set `OPERATOR_EMAILS` and
-   `GOOGLE_CLIENT_ID`. Without a route the Worker answers on its `workers.dev` URL.
-6. **Google OAuth.** In Google Cloud Console create an OAuth client (type *Web
-   application*) and add `https://<your-host>/oauth/google/callback` to its authorised
-   redirect URIs. The Worker derives the redirect URI from the request origin, so no host
-   is hardcoded; see [`docs/console-google-signin-runbook.md`](docs/console-google-signin-runbook.md).
-7. **Set secrets.**
-   ```bash
-   npx wrangler secret put NEXUS_MASTER_KEY
-   npx wrangler secret put CF_ACCOUNT_ID
-   npx wrangler secret put AIG_GATEWAY_ID
-   npx wrangler secret put GOOGLE_CLIENT_SECRET
-   npx wrangler secret put ADMIN_SESSION_SECRET      # openssl rand -base64 32
-   npx wrangler secret put NVIDIA_API_KEY            # plus whichever providers you use
-   ```
-8. **Deploy.** `npx wrangler deploy` publishes immediately; there is no preview step.
-9. **Mint a key.** Open `https://<your-host>/admin`, sign in with Google, and use
-   **API keys > Generate**. The raw token is shown once; only its SHA-256 is stored.
-
-Console operators are the `OPERATOR_EMAILS` var in `wrangler.toml` (comma-separated, **an
-empty list denies everyone**). Rotating `ADMIN_SESSION_SECRET` signs every operator out.
-
-### AI Gateway custom providers
-
-The bundled config uses three custom providers. Register each with a **bare-host**
-`base_url` (API paths live in the route entry) and reference it with the `custom-` prefix:
-
-| Registered slug | Referenced as | `base_url` |
-|---|---|---|
-| `nvidia` | `custom-nvidia` | `https://integrate.api.nvidia.com` |
-| `zai` | `custom-zai` | `https://api.z.ai` |
-| `zai-anthropic` | `custom-zai-anthropic` | `https://api.z.ai` |
-
-```bash
-curl -X POST "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/ai-gateway/custom-providers" \
-  -H "Authorization: Bearer $CF_API_TOKEN" -H 'content-type: application/json' \
-  -d '{"name":"NVIDIA","slug":"nvidia","base_url":"https://integrate.api.nvidia.com","enable":true}'
-```
-
-Only register the ones you will use; remove the rest of the entries from
-`config.default.json` so `/health` stays free of warnings.
-
-## Keys
+Mint virtual keys in the console, or with the machine endpoint:
 
 ```bash
 curl -X POST https://<your-host>/key/generate \
@@ -175,64 +119,250 @@ curl -X POST https://<your-host>/key/generate \
   -d '{"key_alias":"mobile-app","duration":"30d","max_budget":25}'
 ```
 
-The raw token is returned **once**. Revoke with `POST /key/delete` (`{"keys":["sk-..."]}`
-or `{"key_ids":["key-..."]}`), or from the console. Revocation takes effect within ~60s
-(the isolate auth cache).
+- The raw token is returned **once**; only its SHA-256 is stored.
+- Revoke from the console or with `POST /key/delete` (`{"keys":["sk-..."]}` or
+  `{"key_ids":["key-..."]}`); it takes effect within about 60 seconds (the isolate auth cache).
 
-## Adding a provider
+**BYOK:**
 
-**No deploy needed** for the common case; the registry lives in D1:
+- A caller may send a *provider's own* key in the same `Authorization: Bearer` slot.
+- It misses in D1 and is forwarded upstream as the caller's credential (their quota; NVIDIA
+  key rotation does not apply).
+- `dynamic/*` routes refuse BYOK.
+- A **revoked or mistyped virtual key** is not rejected at the edge: it goes upstream and you
+  get the provider's `401`.
+
+## Use with Claude Code
+
+Run Claude Code on any model from any provider you added a key for.
+
+- `claude` stays native (your normal login).
+- `claude-gw` runs the same Claude Code on the gateway.
+- Nothing is written to `settings.json`.
+
+Why use it:
+
+- **Any model:** set a default with `GATEWAY_MODEL`, or pick one per run with `claude-gw --model <provider/model>`.
+- **Lower cost:** give background tasks a cheaper model with `GATEWAY_SMALL_MODEL`.
+- **Shared access:** a team uses one provider key behind per-person virtual keys, each revocable.
+- **Visibility:** AI Gateway logs and caches every call.
+
+Limits:
+
+- **`claude-gw` skips permission prompts by default** (`--dangerously-skip-permissions`):
+  the model can run shell commands and edit files without asking. Use it in a project you
+  trust or a sandbox, or set `GATEWAY_SKIP_PERMISSIONS=0` to be asked first.
+- The model must support tool calling.
+- Quality varies by model: Claude Code's prompts are tuned for Claude, so smaller models may struggle with agentic tasks.
+- Signed thinking survives only on `anthropic/*` and `zai_anthropic/*` ([Limitations](#limitations)).
+
+**1. Save the gateway details once** in `~/.config/nexus-gateway.env`
+(`chmod 600` it; the key is a virtual key from **API keys > Generate**):
 
 ```bash
-# 1. Register it in AI Gateway. base_url is the BARE HOST.
+GATEWAY_URL=https://<your-host>
+GATEWAY_KEY=<your virtual key>
+GATEWAY_MODEL=nvidia_nim/nvidia/nemotron-3-super-120b-a12b   # provider/model, see Models
+# GATEWAY_SMALL_MODEL=groq/llama-3.1-8b-instant   # optional: cheaper model for background tasks
+# GATEWAY_SKIP_PERMISSIONS=0                      # optional: 0 = ask before tools run (default: skip)
+```
+
+**2. Add the function** to `~/.bashrc` or `~/.zshrc`, then open a new terminal:
+
+```bash
+claude-gw() {
+  local cfg="${NEXUS_GATEWAY_ENV:-$HOME/.config/nexus-gateway.env}"
+  [ -r "$cfg" ] || { echo "claude-gw: create $cfg (see the README)" >&2; return 1; }
+  local pick=""                                   # claude-gw --model <provider/model> ...
+  case "$1" in
+    --model)   pick="$2"; shift 2 ;;
+    --model=*) pick="${1#--model=}"; shift ;;
+  esac
+  ( . "$cfg"
+    local model="${pick:-${GW_MODEL:-$GATEWAY_MODEL}}"
+    local skip=--dangerously-skip-permissions
+    [ "${GATEWAY_SKIP_PERMISSIONS:-1}" = 0 ] && skip=
+    env -u ANTHROPIC_API_KEY \
+      ANTHROPIC_BASE_URL="$GATEWAY_URL" \
+      ANTHROPIC_AUTH_TOKEN="$GATEWAY_KEY" \
+      ANTHROPIC_MODEL="$model" \
+      ANTHROPIC_DEFAULT_SONNET_MODEL="$model" \
+      ANTHROPIC_DEFAULT_OPUS_MODEL="$model" \
+      ANTHROPIC_DEFAULT_HAIKU_MODEL="${GATEWAY_SMALL_MODEL:-$model}" \
+      claude $skip "$@" )
+}
+```
+
+**3. Use whichever you want:**
+
+```bash
+claude                                                                   # native Anthropic, unchanged
+claude-gw                                                                # the gateway, with GATEWAY_MODEL
+claude-gw --model nvidia_nim/nvidia/nemotron-3-super-120b-a12b           # pick the model for this run
+claude-gw -p "cat hello.py"                                              # one prompt, then exit
+claude-gw --model nvidia_nim/nvidia/nemotron-3-super-120b-a12b -p "hi"   # model and prompt together
+claude-gw --resume                                                       # any other claude flag works
+```
+
+Notes:
+
+- The variables exist only for that one command, so nothing leaks into your normal `claude`.
+- Do not put `ANTHROPIC_BASE_URL` in `settings.json`: it would send every run to the gateway.
+- **Set all three model tiers.** Claude Code uses a small model for background tasks; a tier
+  left unset sends Anthropic's own model name, which most providers reject.
+- **Anthropic models** (`anthropic/*`, `zai_anthropic/*`) pass through untouched, so extended
+  thinking and prompt caching work as with Anthropic. Other providers are translated.
+- **Token counting** (`/v1/messages/count_tokens`) is forwarded to Anthropic, so it needs an
+  Anthropic key.
+- **One virtual key per person or project**, so you can revoke one without touching the rest.
+  A provider's own key also works as `GATEWAY_KEY` ([BYOK](#virtual-keys-and-byok)).
+
+## Configure
+
+### Console sign-in
+
+`deploy.mjs` sets a shared password. Keep it, add Google, or use both; with neither
+configured `/admin` cannot be entered.
+
+- **Shared password:** the `ADMIN_PASSWORD_HASH` secret. Anyone who knows it gets in.
+- **Google:** `GOOGLE_CLIENT_ID` and `OPERATOR_EMAILS` in `wrangler.toml`, plus the
+  `GOOGLE_CLIENT_SECRET` secret. Only addresses in `OPERATOR_EMAILS` get in; an empty list
+  denies everyone.
+- Rotating `ADMIN_SESSION_SECRET` signs every operator out.
+- Details: [`docs/manual-setup.md`](docs/manual-setup.md#console-sign-in) and
+  [`docs/console-google-signin-runbook.md`](docs/console-google-signin-runbook.md).
+
+### Provider keys
+
+The **Providers** tab lists each provider with a status (*Ready* or *Needs key*) and a key field.
+
+- Paste a key and Save; it is live within about a minute, with no deploy.
+- A saved key shows only its last four characters, with *Replace* and *Remove*.
+- A key set with `wrangler secret put` shows as *Set in wrangler*.
+- A provider with several keys (NVIDIA rotates across up to six) has a *Manage keys* button.
+- Keys are stored in D1, AES-GCM encrypted. The encryption key derives from
+  `NEXUS_MASTER_KEY`, or from `KEY_ENCRYPTION_SECRET` if set. **If that value changes, stored
+  keys become unreadable and show as missing; enter them again.**
+- A key set with `wrangler secret put` always wins over one entered in the console.
+- Only secret names a provider already references can be stored, so this cannot overwrite
+  `NEXUS_MASTER_KEY` or any other setting.
+- Anyone who can sign in to the console can replace or remove provider keys.
+
+### Adding a provider
+
+No deploy is needed; the registry lives in D1. **Providers > Add provider** covers it all:
+
+- **Native provider** (`groq`, `openai`, `openrouter`, `huggingface`, `anthropic`,
+  `workers-ai`): enter the prefix, the slug (its bare name) and the API key.
+- **Any other provider:** enter the prefix, its **Base URL** (for example
+  `https://api.myprov.com`) and the API key. The gateway registers it in AI Gateway as
+  `custom-<prefix>` and saves it. An existing provider with the same URL is reused; one with a
+  different URL is refused, never repointed.
+
+The Base URL field appears when the Worker has an `AIG_API_TOKEN` secret: a **separate**
+Cloudflare API token with only *AI Gateway: Edit* on your account (not the deploy token).
+
+```bash
+export AIG_API_TOKEN=...                           # before node scripts/deploy.mjs, or
+npx wrangler secret put AIG_API_TOKEN              # on an existing deployment
+```
+
+Without it, register the provider by hand first and enter its slug (`custom-myprov`) in the form:
+
+```bash
 curl -X POST "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/ai-gateway/custom-providers" \
   -H "Authorization: Bearer $CF_API_TOKEN" -H 'content-type: application/json' \
   -d '{"name":"My Provider","slug":"myprov","base_url":"https://api.myprov.com","enable":true}'
-
-# 2. Provide its key (the one step that needs a deploy cycle)
-npx wrangler secret put MYPROV_API_KEY
-
-# 3. Add it in the console: /admin > Providers > {prefix: myprov,
-#    slug: custom-myprov, secret: MYPROV_API_KEY}.  Live within ~60s.
 ```
 
-Referencing a **custom** AI Gateway provider requires the `custom-` prefix: the registered
-slug is `myprov`, the slug you enter is `custom-myprov`. Native providers use their bare
-name.
+- A custom AI Gateway provider is referenced with the `custom-` prefix; native providers use
+  their bare name.
+- A non-standard endpoint path goes in the route's `path`.
 
-Non-standard endpoint path? Put it in the route's `path`. AI Gateway appends the path to
-the provider's `base_url`.
+## How it works
+
+Every request passes the gate once, is routed by its model prefix, and leaves only through
+AI Gateway.
+
+```
+  client   OpenAI or Anthropic request
+      │
+      ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 1  GATE      who is calling?                                           │
+│                                                                        │
+│   virtual key ....... ok     key sent upstream: Worker secret or pool  │
+│   unknown key ....... BYOK   key sent upstream: the caller's own       │
+│   no key / D1 down .. 401    never falls back to BYOK                  │
+└────────────────────────────────────────────────────────────────────────┘
+      │  chat requests
+      ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 2  ROUTE     which provider?                                           │
+│                                                                        │
+│   split the model at the first ":" or "/"                              │
+│   unknown prefix ... catch-all (NVIDIA NIM)                            │
+│   dynamic/* + BYOK . 401                                               │
+└────────────────────────────────────────────────────────────────────────┘
+      │  provider + model
+      ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 3  SHAPE     which wire does the provider speak?                       │
+│                                                                        │
+│   Anthropic-native (anthropic, zai_anthropic) .. sent as is            │
+│   OpenAI provider, OpenAI request .............. reasoning dialect     │
+│   OpenAI provider, Anthropic request ........... translated both ways; │
+│                                                  thinking text kept by │
+│                                                  ThinkingSessionDO     │
+└────────────────────────────────────────────────────────────────────────┘
+      │
+      ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 4  EGRESS    Cloudflare AI Gateway: the only way out                   │
+│                                                                        │
+│   native slugs ... groq, openai, openrouter, huggingface,              │
+│                    anthropic, workers-ai                               │
+│   custom slugs ... custom-nvidia, custom-zai, custom-zai-anthropic     │
+└────────────────────────────────────────────────────────────────────────┘
+      │
+      ▼
+  provider response, streamed back in the caller's wire
+```
+
+- **Anthropic extras skip steps 2 and 3.** `count_tokens`, `batches*` and `/anthropic/v1/*`
+  pass the gate, then go straight to AI Gateway untouched. `/v1/organizations` and `oauth`
+  are refused with 403.
+- **Auth:** the token comes from `Authorization`, `x-api-key` or `?api_key=`, and is looked up
+  in D1 by SHA-256 (isolate cache: hit 60 s, miss 10 s). Code: `src/auth.ts`.
+- **A provider with no AI Gateway slug** is a 500; nothing is ever fetched directly.
+
+## Limitations
+
+- **rpm, tpm and budget are recorded on a key but not enforced at the edge.**
+- **Signed Anthropic thinking cannot round-trip** through an OpenAI-compatible upstream. Text
+  is re-injected best-effort via a Durable Object; use `zai_anthropic/*` or `anthropic/*`
+  when you need the signed chain intact.
+- **Console sessions are stateless.** Removing an operator from `OPERATOR_EMAILS` blocks the
+  next login only; existing cookies run out at the 12-hour TTL.
+- **A revoked key can be served for up to 60 seconds** from a warm isolate.
 
 ## Development
 
 ```bash
 npm run check:css && npm run typecheck && npx vitest run   # the whole gate
-npx wrangler dev                                           # local
+npx wrangler dev                                           # local (copy .dev.vars.example to .dev.vars)
 npx wrangler tail                                          # live logs
 ```
 
-Unit tests (`test/`) cover the router, SSE codec, reasoning dialects, the translate layer,
-prompt caching, the BYOK boundary, the key pool and the console pages. Live smoke tests
-(`tests/`, Python) run against a deployed or `wrangler dev` edge and are gated on
-`RUN_NEXUS_LIVE=1`. The project ships no CI; see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- The unit tests in `test/` run inside workerd. There is no CI.
+- Contributing: [`CONTRIBUTING.md`](.github/CONTRIBUTING.md).
+- [`docs/invariants.md`](docs/invariants.md): rules that break things quietly
+- [`docs/console-ui.md`](docs/console-ui.md): the console's CSS pipeline, page structure and routes
+- [`docs/dynamic-routes.md`](docs/dynamic-routes.md): AI Gateway dynamic routes
+- [`docs/manual-setup.md`](docs/manual-setup.md): step-by-step setup and sign-in options
 
-## Limitations
+## Security and license
 
-- **rpm / tpm / budget are recorded on a key but not enforced at the edge.** The columns
-  exist; nothing reads them on the request path yet.
-- **Signed Anthropic thinking cannot round-trip** through an OpenAI-compat upstream. Text
-  is re-injected best-effort via a Durable Object; use `zai_anthropic/*` or `anthropic/*`
-  when you need the signed chain intact.
-- **Console sessions are stateless.** Removing an operator from `OPERATOR_EMAILS` blocks
-  the next login only; outstanding cookies run out at the 12h TTL. Rotate
-  `ADMIN_SESSION_SECRET` to sign everyone out at once.
-- **A revoked key can be served for up to 60s** from a warm isolate.
-
-## Security
-
-Report vulnerabilities privately; see [`SECURITY.md`](SECURITY.md).
-
-## License
-
-[MIT](LICENSE). The vendored Geist fonts are under the SIL Open Font License; see
-[`NOTICE`](NOTICE).
+Report vulnerabilities privately; see [`SECURITY.md`](.github/SECURITY.md). Licensed under
+[MIT](LICENSE); the vendored Geist fonts are under the SIL Open Font License (see
+[`NOTICE`](NOTICE)).

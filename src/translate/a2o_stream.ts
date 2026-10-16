@@ -18,7 +18,7 @@ import { mapFinishReason, openaiToAnthropicUsage } from "./o2a_response";
  *      argument fragments route to the right block by index.
  *
  *  `onDone` is fired from flush() with any merged reasoning blocks, for the
- *  ThinkingSessionDO to persist (P3). Call from a `ctx.waitUntil` inside onDone. */
+ *  ThinkingSessionDO to persist. Call from a `ctx.waitUntil` inside onDone. */
 
 interface OpenAIToolCallDelta {
   index?: number;

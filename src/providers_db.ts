@@ -3,7 +3,7 @@ import type { Env, GatewayConfig, ProviderEntry } from "./types";
 /** The provider registry in D1 — the layer that makes "add a provider" a console action
  *  rather than a deploy.
  *
- *  Overlay semantics: the bundled `config.default.json` is the FLOOR, D1 rows win on top.
+ *  Overlay semantics: the bundled `src/config.default.json` is the FLOOR, D1 rows win on top.
  *  That ordering is deliberate:
  *    - a fresh deployment with an empty D1 still serves traffic (no chicken-and-egg);
  *    - a D1 outage degrades to the bundled set instead of refusing every model;
@@ -83,7 +83,7 @@ export async function loadRegistry(
 /** Drop the isolate cache so a console write is visible immediately in THIS isolate.
  *  Other isolates still wait out the TTL — acceptable for a provider list, and the same
  *  behavior the auth cache has. */
-export function invalidateRegistry(): void {
+function invalidateRegistry(): void {
   cache = null;
 }
 

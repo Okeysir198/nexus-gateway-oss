@@ -8,14 +8,11 @@ import {
   upsertKey,
   type KeyRecord,
 } from "./keys_db";
-import { json } from "./errors";
+import { invalidBody, json, readJsonObject } from "./errors";
 import { requireMaster } from "./auth";
 
-/** Key-management endpoints. D1 is the SOLE authority: the Worker mints, revokes and
- *  lists entirely against D1.
- *
- *  Admin auth is NEXUS_MASTER_KEY (`requireMaster`). The response shapes follow the
- *  common `/key/generate` convention (`key`, `key_id`, `key_alias`, `expires`, `duration`). */
+/** Key-management endpoints. D1 is the sole authority: keys are minted, revoked and listed
+ *  against D1 only. Machine auth is NEXUS_MASTER_KEY (`requireMaster`). */
 
 /** Parse a `duration` ("30d", "24h", "60m", "3600s") into seconds. */
 function parseDuration(d: unknown): number | null {
@@ -64,7 +61,6 @@ export async function mintKey(
     return { status: 503, body: { error: { message: "key store unavailable" } } };
   }
 
-  // The console and operator scripts parse these fields.
   return {
     status: 200,
     body: { key: raw, key_id: rec.key_id!, key_alias: rec.key_alias ?? null, expires: expires_at },
@@ -88,34 +84,25 @@ export async function revokeKeys(
 export async function keyGenerate(env: Env, request: Request): Promise<Response> {
   const denied = requireMaster(env, request);
   if (denied) return denied;
-  let body: Record<string, unknown> = {};
-  try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
-    /* an empty body is valid — mint a key with defaults */
-  }
+  // An empty body is valid: mint a key with defaults.
+  const body = (await readJsonObject(request)) ?? {};
   const res = await mintKey(env, body);
   return json(res.status, res.body);
 }
 
 /** POST /key/delete — revoke in D1. Accepts `{keys:[raw...]}` and/or `{key_ids:[...]}`.
- *
- *  The raw tokens MUST be hashed before hitting revokeKey — passing them through
- *  verbatim matches neither `key_id` nor `token_hash`, so the UPDATE would affect 0 rows
- *  while the key stayed live. */
+ *  Raw tokens are hashed before they reach revokeKey (see its warning). */
 export async function keyDelete(env: Env, request: Request): Promise<Response> {
   const denied = requireMaster(env, request);
   if (denied) return denied;
 
-  let parsed: { keys?: string[]; key_ids?: string[] } = {};
-  try {
-    parsed = (await request.json()) as { keys?: string[]; key_ids?: string[] };
-  } catch {
-    return json(400, { error: { message: "invalid JSON body" } });
-  }
-
-  const rawKeys = parsed.keys ?? [];
-  const keyIds = parsed.key_ids ?? [];
+  const parsed = await readJsonObject<{ keys?: unknown; key_ids?: unknown }>(request);
+  if (!parsed) return invalidBody();
+  const strings = (v: unknown): string[] | null =>
+    v === undefined ? [] : Array.isArray(v) && v.every((x) => typeof x === "string") ? (v as string[]) : null;
+  const rawKeys = parsed && typeof parsed === "object" ? strings(parsed.keys) : null;
+  const keyIds = parsed && typeof parsed === "object" ? strings(parsed.key_ids) : null;
+  if (!rawKeys || !keyIds) return json(400, { error: { message: "keys and key_ids must be arrays of strings" } });
   if (rawKeys.length === 0 && keyIds.length === 0) {
     return json(400, { error: { message: "provide keys[] or key_ids[]" } });
   }

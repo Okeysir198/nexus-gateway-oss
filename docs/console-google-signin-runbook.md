@@ -1,6 +1,8 @@
 # Runbook - Google sign-in for the operator console
 
-Do this when standing the console up on a fresh account or rotating the OAuth client.
+Google sign-in is optional: the console also accepts a shared password (see `manual-setup.md`,
+"Console sign-in"). Do this only if you want Google, when standing the console up on a fresh
+account, or when rotating the OAuth client.
 
 1. Google Cloud Console: create (or reuse) an OAuth client of type *Web application*.
    Add `https://<your-host>/oauth/google/callback` to its authorised redirect URIs. The
@@ -10,7 +12,7 @@ Do this when standing the console up on a fresh account or rotating the OAuth cl
    those apps with `redirect_uri_mismatch` at Google's consent page, before this Worker is
    reached.
 2. Put the client id in `wrangler.toml` as `GOOGLE_CLIENT_ID` and your allowed operator
-   emails in `OPERATOR_EMAILS` (comma-separated; an empty list denies everyone).
+   emails in `OPERATOR_EMAILS` (comma-separated; an empty list denies every Google account).
 3. `npx wrangler secret put GOOGLE_CLIENT_SECRET`
 4. `npx wrangler secret put ADMIN_SESSION_SECRET` with a fresh 32-byte random value
    (`openssl rand -base64 32`). Rotating it later signs every operator out.

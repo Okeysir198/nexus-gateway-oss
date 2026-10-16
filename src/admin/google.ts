@@ -15,7 +15,7 @@ const GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
 
 const LOGIN_SCOPES = "openid email";
 
-export interface GoogleTokensResponse {
+interface GoogleTokensResponse {
   access_token: string;
   expires_in: number;
   scope: string;

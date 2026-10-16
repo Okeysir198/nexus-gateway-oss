@@ -6,8 +6,11 @@ Issues and pull requests are welcome.
 
 ```bash
 npm install
-cp .dev.vars.example .dev.vars
+cp .dev.vars.example .dev.vars   # then `npx wrangler dev`; sign in with the password in that file
 ```
+
+To try a real deployment, use `node scripts/deploy.mjs` (see the README) with a throwaway
+`--name`, and remove it with `--destroy`.
 
 ## Before you push
 
@@ -19,8 +22,7 @@ npm run check:css && npm run typecheck && npx vitest run
 
 `npm test` runs `check:css` first via `pretest`. Tests run inside workerd
 (`@cloudflare/vitest-pool-workers`), so `crypto.subtle` and `TransformStream` behave as in
-production. The Python suite under `tests/` is a live smoke test against a deployed or
-`wrangler dev` edge and is skipped unless `RUN_NEXUS_LIVE=1`.
+production.
 
 ## Rules that bite
 

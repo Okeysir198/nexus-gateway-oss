@@ -44,7 +44,7 @@ export class ThinkingSessionDO extends DurableObject<Env> {
     await this.ctx.storage.setAlarm(Date.now() + TTL_MS);
   }
 
-  /** Return prior signed thinking blocks for a model (most-recent-first chain). */
+  /** Return prior thinking blocks saved for this model, oldest first. */
   async loadPriorThinking(req: { conversationId: string; model: string }): Promise<ThinkingBlock[]> {
     const turns = (await this.ctx.storage.get<Turn[]>("turns")) ?? [];
     const out: ThinkingBlock[] = [];
@@ -53,7 +53,6 @@ export class ThinkingSessionDO extends DurableObject<Env> {
     }
     return out;
   }
-
 
   async alarm(): Promise<void> {
     const turns = (await this.ctx.storage.get<Turn[]>("turns")) ?? [];

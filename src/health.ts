@@ -1,3 +1,4 @@
+import { withProviderKeys } from "./provider_keys";
 import type { Env, GatewayConfig, ProviderEntry } from "./types";
 import { loadConfig, configWarnings } from "./config";
 import { aigUrl } from "./upstream/aigateway";
@@ -20,14 +21,11 @@ let probeCache: ProbeMap = {};
 
 /** Resolve one usable key for a probe — the route's secret, or the first live
  *  secret in its pool (the nvidia pool's keys). */
-function resolveKey(entry: ProviderEntry, env: Env): string {
+function resolveKey(entry: ProviderEntry, cfg: GatewayConfig, env: Env): string {
   const envRec = env as unknown as Record<string, string>;
   if (entry.secret) return envRec[entry.secret] ?? "";
   if (entry.keyPool) {
-    for (const k of [
-      "NVIDIA_API_KEY", "NVIDIA_API_KEY_02", "NVIDIA_API_KEY_03",
-      "NVIDIA_API_KEY_04", "NVIDIA_API_KEY_05", "NVIDIA_API_KEY_06",
-    ]) {
+    for (const k of cfg.keyPools?.[entry.keyPool]?.secrets ?? []) {
       if (envRec[k]) return envRec[k];
     }
   }
@@ -57,7 +55,7 @@ export async function health(env: Env, request: Request): Promise<Response> {
 
   const now = Date.now();
   if (now - probedAt > cacheTTL) {
-    probeCache = await probeAll(env, cfg);
+    probeCache = await probeAll(await withProviderKeys(env, cfg), cfg);
     probedAt = now;
   }
   const withStatus = providers.map((p) => ({ ...p, ...(probeCache[p.prefix] ?? { status: "n/a" }) }));
@@ -68,12 +66,12 @@ export async function health(env: Env, request: Request): Promise<Response> {
 async function probeAll(env: Env, cfg: GatewayConfig): Promise<ProbeMap> {
   const entries = Object.entries(cfg.providers).filter(([, p]) => p.enabled !== false);
   const results = await Promise.all(
-    entries.map(async ([name, entry]) => [name, await probeOne(entry, env)] as const),
+    entries.map(async ([name, entry]) => [name, await probeOne(entry, cfg, env)] as const),
   );
   return Object.fromEntries(results);
 }
 
-async function probeOne(entry: ProviderEntry, env: Env): Promise<Probe> {
+async function probeOne(entry: ProviderEntry, cfg: GatewayConfig, env: Env): Promise<Probe> {
   if (entry.upstream === "anthropic_native") {
     // Anthropic-native upstreams don't serve GET /models on the OpenAI path.
     return { status: "n/a", detail: "anthropic-native (no /models probe)" };
@@ -84,7 +82,7 @@ async function probeOne(entry: ProviderEntry, env: Env): Promise<Probe> {
   if (!entry.slug) return { status: "n/a", detail: "no AI Gateway slug" };
   const url = aigUrl(env, entry.slug, "/v1/models");
   if (!url) return { status: "n/a", detail: "AI Gateway not configured" };
-  const key = resolveKey(entry, env);
+  const key = resolveKey(entry, cfg, env);
   const start = Date.now();
   try {
     const r = await fetch(url, {

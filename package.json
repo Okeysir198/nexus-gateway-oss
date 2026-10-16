@@ -1,16 +1,26 @@
 {
   "name": "nexus-gateway",
   "version": "1.0.0",
+  "description": "Cloudflare Worker LLM gateway: OpenAI/Anthropic wire translation, AI Gateway egress, D1 virtual keys",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/okeysir198/nexus-gateway-oss.git"
+  },
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "node scripts/deploy.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "pretest": "npm run check:css",
     "css": "node scripts/build-css.mjs",
-    "check:css": "node scripts/check-css.mjs"
+    "check:css": "node scripts/check-css.mjs",
+    "hash-password": "node scripts/hash-password.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.8",
@@ -20,11 +30,5 @@
     "typescript": "^5.7.3",
     "vitest": "^4.1.10",
     "wrangler": "^4.0.0"
-  },
-  "license": "MIT",
-  "description": "Cloudflare Worker LLM gateway: OpenAI/Anthropic wire translation, AI Gateway egress, D1 virtual keys",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/okeysir198/nexus-gateway-oss.git"
   }
 }

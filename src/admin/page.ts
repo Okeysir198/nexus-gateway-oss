@@ -3,7 +3,6 @@ import { randomB64url } from "./session";
 import { FAVICON } from "./brand";
 import { SHELL_TOP, SHELL_BOTTOM } from "./view_shell";
 import { KEYS_HTML, KEYS_JS } from "./view_keys";
-import { USERS_HTML, USERS_JS } from "./view_users";
 import { PROVIDERS_HTML, PROVIDERS_JS } from "./view_providers";
 import { CORE_JS } from "./client_core";
 
@@ -24,7 +23,7 @@ import { CORE_JS } from "./client_core";
  *  value beyond the light|dark match below. */
 export function themeAttr(request: Request): string {
   const cookie = request.headers.get("cookie") ?? "";
-  const m = cookie.match(/(?:^|;\s*)lw-theme=(light|dark)(?:;|$)/);
+  const m = cookie.match(/(?:^|;\s*)nexus-theme=(light|dark)(?:;|$)/);
   return m && m[1] === "dark" ? ' class="dark"' : "";
 }
 
@@ -40,20 +39,19 @@ function headOpen(theme: string): string {
   );
 }
 
-/** The three panels, one per tab. Each is a DIRECT child of .shell (the sibling proof
+/** The panels, one per tab. Each is a DIRECT child of .shell (the sibling proof
  *  in page_render.test.ts walks the div balance) wrapping that view's markup. */
 const BODY =
   "\n</head>\n<body class=\"no-js\">\n" +
   SHELL_TOP + "\n" +
-  '<section class="tabpanel" id="panel-keys" aria-labelledby="lab-keys">\n' + KEYS_HTML + "\n</section>\n" +
-  '<section class="tabpanel" id="panel-providers" aria-labelledby="lab-providers">\n' + PROVIDERS_HTML + "\n</section>\n" +
-  '<section class="tabpanel" id="panel-users" aria-labelledby="lab-users">\n' + USERS_HTML + "\n</section>\n" +
+  '<section class="tabpanel space-y-4" id="panel-keys" aria-labelledby="lab-keys">\n' + KEYS_HTML + "\n</section>\n" +
+  '<section class="tabpanel space-y-4" id="panel-providers" aria-labelledby="lab-providers">\n' + PROVIDERS_HTML + "\n</section>\n" +
   SHELL_BOTTOM;
 
 /** The assembled inline script, in view order — the ONE list of what ships. The
  *  compile guard in page_render.test.ts walks exactly this, so a new view's JS
  *  cannot skip it. */
-export const VIEW_SCRIPTS = [KEYS_JS, PROVIDERS_JS, USERS_JS, CORE_JS] as const;
+export const VIEW_SCRIPTS = [KEYS_JS, PROVIDERS_JS, CORE_JS] as const;
 
 const SCRIPT = VIEW_SCRIPTS.join("");
 
@@ -106,8 +104,8 @@ export function newNonce(): string {
   return randomB64url(16);
 }
 
-/** The nonce'd <style> element. Takes STYLE_BODY (~140 KB: base64 fonts + design tokens +
- *  console rules) and concatenates rather than `STYLES.replace(...)` — replace cannot
+/** The nonce'd <style> element. Takes STYLE_BODY (~140 KB: base64 fonts + theme tokens +
+ *  console rules) and concatenates rather than `STYLES.replace(...)`: replace cannot
  *  alias, so it flattened and re-allocated the whole 140 KB on every console render and
  *  every sign-in page. `+` builds a rope and copies nothing. */
 export function styleTag(nonce: string): string {

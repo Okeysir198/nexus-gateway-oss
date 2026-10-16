@@ -3,7 +3,7 @@ import type { ThinkingBlock } from "../thinking_session_do";
 /** OpenAI non-streaming `/v1/chat/completions` response → Anthropic `/v1/messages`
  *  response. Assembles content blocks (text, tool_use, thinking), maps the finish
  *  reason, and adapts usage. Returns the Anthropic body + any thinking blocks seen
- *  (for the ThinkingSessionDO to persist in P3). */
+ *  (for the ThinkingSessionDO to persist). */
 
 interface OpenAIChoice {
   message?: {

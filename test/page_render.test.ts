@@ -5,7 +5,6 @@ import { COMPILED_CSS } from "../src/admin/theme/app.css.gen";
 import { CORE_JS } from "../src/admin/client_core";
 import { KEYS_HTML } from "../src/admin/view_keys";
 import { PROVIDERS_HTML } from "../src/admin/view_providers";
-import { USERS_HTML } from "../src/admin/view_users";
 import { I } from "../src/admin/icons";
 import { SHELL_TOP, TABS } from "../src/admin/view_shell";
 import { SIDEBAR_MENU_BUTTON_LG } from "../src/admin/ui";
@@ -17,12 +16,12 @@ import { loginPage } from "../src/admin/login";
  *  way tsc cannot see: a stray backtick inside a CSS or JS string silently ENDS the
  *  literal, and everything after it is parsed as JavaScript. The file still typechecks;
  *  the Worker then refuses to boot with "X is not defined" — a total outage. That
- *  happened once during this rewrite (a backtick in a CSS comment in styles.ts).
+ *  happened once (a backtick in a CSS comment in styles.ts).
  *
  *  Rendering the page and asserting on its shape is the cheapest thing that catches it,
  *  and it doubles as a check that the CSP still carries every directive the page needs.
  *  The tab tests exist because the tab mechanism is a GENERAL SIBLING combinator: the
- *  three radios, the sidebar peer, the inset and the bottom nav must be DIRECT children
+ *  radios, the sidebar peer, the inset and the bottom nav must be DIRECT children
  *  of [data-slot="sidebar-wrapper"], in that order, or a panel stays display:none for
  *  everyone with JS on while the markup still contains every word these tests look for.
  *  (Broken exactly that way once in the previous shell: nesting the panels one div
@@ -41,7 +40,6 @@ describe("template-literal integrity", () => {
     ...VIEW_SCRIPTS.map((js, i) => ["view script " + i, js] as [string, string]),
     ["KEYS_HTML", KEYS_HTML],
     ["PROVIDERS_HTML", PROVIDERS_HTML],
-    ["USERS_HTML", USERS_HTML],
     // The icons are interpolated into the shell/nav markup at assembly time.
     ...Object.values(I).map((glyph, i) => ["icon " + i, glyph] as [string, string]),
   ];
@@ -76,7 +74,7 @@ describe("template-literal integrity", () => {
     expect(STYLES.startsWith("<style>")).toBe(true);
     expect(STYLES.endsWith("</style>")).toBe(true);
     // The compiled sheet carries the theme: the .dark palette block (theme.css
-    // v5 switches on the CLASS, so a missing block means the theme did not embed),
+    // switches on the CLASS, so a missing block means the theme did not embed),
     // and the sidebar roles the shell's fusion rules point at.
     expect(COMPILED_CSS).toContain(".dark");
     expect(COMPILED_CSS).toContain("--sidebar-primary");
@@ -106,9 +104,6 @@ describe("the tab structure holds together", () => {
       const markup = html.replace(/<style[\s\S]*?<\/style>/, "").replace(/<script[\s\S]*?<\/script>/, "");
       expect(markup.split('<label for="tab-' + t + '"').length - 1).toBe(2);
     }
-    // The GPU service panel is gone; nothing may resurrect its ids.
-    expect(html).not.toContain("panel-services");
-    expect(html).not.toContain("tab-services");
     expect(html).not.toContain('id="view-');
   });
 
@@ -140,10 +135,12 @@ describe("the tab structure holds together", () => {
     // clip or vanish (observed live).
     expect(SIDEBAR_MENU_BUTTON_LG).toContain("group-data-[collapsible=icon]:p-0!");
     expect(SIDEBAR_MENU_BUTTON_LG).not.toContain("group-data-[collapsible=icon]:p-2!");
-    // …and the shell really uses it for the lg rows (brand, footer account,
-    // footer sign-out): the constant merging correctly is worthless unused.
+    // …and the shell really uses it for the lg rows (brand and the
+    // footer account row): the constant merging correctly is worthless unused. Sign out is a
+    // default-size row, so its icon centres in the collapsed rail.
     const lgRows = SHELL_TOP.split('class="' + SIDEBAR_MENU_BUTTON_LG + '"').length - 1;
-    expect(lgRows).toBeGreaterThanOrEqual(3);
+    expect(lgRows).toBeGreaterThanOrEqual(2);
+    expect(SHELL_TOP).toContain('id="outBtn" data-slot="sidebar-menu-button" data-sidebar="menu-button" data-size="default"');
   });
 
   it("keeps the radios, sidebar, inset and bottom-nav DIRECT children of the wrapper — the sibling proof", async () => {
@@ -219,11 +216,11 @@ describe("adminPage", () => {
   });
 
   it("stamps the operator's theme choice on <html> so the page cannot flash", async () => {
-    expect(await render("lw-theme=dark").text()).toContain('<html lang="en" class="dark">');
+    expect(await render("nexus-theme=dark").text()).toContain('<html lang="en" class="dark">');
     // No cookie ⇒ light: theme.css has no prefers-color-scheme block, the
     // default is the light palette, and the toggle writes the cookie from JS.
     expect(await render().text()).toContain('<html lang="en">');
-    expect(await render("lw-theme=light").text()).toContain('<html lang="en">');
+    expect(await render("nexus-theme=light").text()).toContain('<html lang="en">');
   });
 
   it("carries the skeleton slots — trigger, breadcrumb, footer account controls", async () => {
@@ -234,16 +231,17 @@ describe("adminPage", () => {
     expect(html).toContain('id="crumb-here"');
     expect(html).toContain('id="who"');
     expect(html).toContain('id="outBtn"');
-    // The password console is gone — no button may resurrect it.
+    // There is no per-user password console. The only password-type inputs are the masked
+    // provider-key fields on the Providers tab.
     expect(html).not.toContain('id="pwBtn"');
     expect(html).not.toContain("admin/password");
-    expect(html).not.toContain('type="password"');
+    expect(html).toContain('id="pKey" type="password"');
   });
 });
 
 describe("the sign-in page (Google-only)", () => {
   const renderLogin = (cookie?: string) =>
-    loginPage(new Request("https://x/admin", cookie ? { headers: { cookie } } : undefined));
+    loginPage({} as unknown as import("../src/types").Env, new Request("https://x/admin", cookie ? { headers: { cookie } } : undefined));
 
   it("offers exactly one door — Google — and no password field anywhere", async () => {
     const html = await renderLogin().text();
@@ -254,7 +252,7 @@ describe("the sign-in page (Google-only)", () => {
   });
 
   it("rides the same nonce CSP and stylesheet as the console", async () => {
-    const res = renderLogin("lw-theme=dark");
+    const res = renderLogin("nexus-theme=dark");
     const html = await res.text();
     expect(html).toContain('class="dark"');
     const nonces = [...html.matchAll(/nonce="([^"]+)"/g)].map((m) => m[1]);
@@ -266,12 +264,10 @@ describe("the sign-in page (Google-only)", () => {
     expect(csp).not.toContain("unsafe-inline");
   });
 
-  it("is the stock login-03 shape — centered lockup and the operator note", async () => {
+  it("is the stock login-03 shape — a centered lockup over one card", async () => {
     const html = await renderLogin().text();
     // The lockup link rides self-center inside the max-w-sm frame...
     expect(html).toContain('class="flex items-center gap-2 self-center font-medium"');
-    // ...and the note sits outside the Card, centred under it.
-    expect(html).toContain('class="px-6 text-center text-sm text-muted-foreground"');
     // No two-column brand panel, no fake doors from the stock block's siblings —
     // over MARKUP only: the shared stylesheet may legitimately carry these
     // utilities for the console's own views.

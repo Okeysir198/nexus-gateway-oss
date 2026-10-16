@@ -8,15 +8,13 @@ import type { Env } from "../types";
  *  request, so verification is signature → expiry → email and touches NO database.
  *
  *  The signing key is derived from ADMIN_SESSION_SECRET (its own secret, not the master
- *  key — the master key remains a machine credential and no longer mixes into anything
- *  human-facing). Consequence, by design: rotating ADMIN_SESSION_SECRET signs every
- *  operator out everywhere. There is no per-user revocation any more — an operator is
- *  switched off by removing their address from OPERATOR_EMAILS (blocks the NEXT login;
- *  outstanding cookies run out at the 12h TTL) or by rotating the secret (blocks
- *  everything at once).
+ *  key, which stays a machine credential). With the secret UNSET nothing is signed or
+ *  accepted: an empty secret would give a publicly known key, i.e. forgeable sessions.
+ *  Rotating the secret signs every operator out everywhere; there is no per-user
+ *  revocation. Removing an address from OPERATOR_EMAILS blocks the NEXT login only;
+ *  outstanding cookies run out at the 12h TTL.
  *
- *  Operators live in the OPERATOR_EMAILS var, not in D1. The :v2 domain separation
- *  makes tokens from any older scheme fail verification. */
+ *  The :v2 domain separation makes tokens from any older scheme fail verification. */
 
 const COOKIE = "nexus_admin";
 const TTL_S = 12 * 3600;
@@ -38,7 +36,7 @@ export function randomB64url(n: number): string {
   return b64url(crypto.getRandomValues(new Uint8Array(n)));
 }
 
-function b64urlDecode(s: string): Uint8Array {
+export function b64urlDecode(s: string): Uint8Array {
   const b64 = s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4);
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
@@ -47,14 +45,14 @@ function b64urlDecode(s: string): Uint8Array {
 }
 
 async function signingKey(env: Env): Promise<CryptoKey> {
-  // Domain-separated from any other use of the secret. :v2 = the Google-only era; the
-  // :v1 tokens were keyed off NEXUS_MASTER_KEY and die here by construction.
+  // Domain-separated from any other use of the secret.
   const material = new TextEncoder().encode(`nexus-admin-session:v2:${env.ADMIN_SESSION_SECRET ?? ""}`);
   const digest = await crypto.subtle.digest("SHA-256", material);
   return crypto.subtle.importKey("raw", digest, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
 }
 
 export async function mintSession(env: Env, email: string): Promise<string> {
+  if (!env.ADMIN_SESSION_SECRET) throw new Error("ADMIN_SESSION_SECRET is not set");
   const payload: Session = { e: email, exp: Math.floor(Date.now() / 1000) + TTL_S };
   const body = b64url(new TextEncoder().encode(JSON.stringify(payload)));
   const key = await signingKey(env);
@@ -65,7 +63,7 @@ export async function mintSession(env: Env, email: string): Promise<string> {
 /** Verify a session token. Returns the operator EMAIL, or null.
  *  Signature → expiry → email present; nothing else to check — there is no row. */
 export async function verifySession(env: Env, token: string | null): Promise<string | null> {
-  if (!token) return null;
+  if (!token || !env.ADMIN_SESSION_SECRET) return null;
   const [body, sig] = token.split(".");
   if (!body || !sig) return null;
 
@@ -108,4 +106,13 @@ export function sessionCookie(token: string): string {
 export function clearCookie(name = COOKIE): string {
   const samesite = name === COOKIE ? "Strict" : "Lax";
   return `${name}=; HttpOnly; Secure; SameSite=${samesite}; Path=/; Max-Age=0`;
+}
+
+/** CSRF: SameSite=Strict already stops the browser attaching our cookie to cross-site
+ *  requests. This header is defence in depth — a cross-origin caller cannot set a custom
+ *  header without a CORS preflight, which we never answer. Simple requests (forms,
+ *  img/script tags) therefore cannot reach a state-changing route. */
+export function csrfOk(request: Request): boolean {
+  if (request.method === "GET" || request.method === "HEAD") return true;
+  return request.headers.get("x-nexus-console") === "1";
 }
